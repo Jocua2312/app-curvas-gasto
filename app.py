@@ -914,39 +914,58 @@ with tab2:
                 st.warning("No hay aforos activos, se usará el rango completo con paso fino.")
         
         if st.button("Generar Tabla de Geometría"):
+            def generar_rango_redondeado(inicio, fin, paso):
+                """
+                Genera un array de valores asegurando que sean múltiplos exactos del paso
+                y que el último valor (fin) siempre esté incluido.
+                """
+                if inicio >= fin:
+                    return np.array([fin])
+                
+                # Encontrar el primer múltiplo exacto del paso que sea >= inicio
+                primer_multiplo = np.ceil(inicio / paso) * paso
+                
+                # Usar linspace en lugar de arange para evitar errores de precisión decimal
+                num_pasos = int(np.floor(round((fin - primer_multiplo) / paso, 5)))
+                
+                if num_pasos < 0:
+                    return np.array([fin])
+                    
+                # Generar secuencia
+                secuencia = [primer_multiplo + i * paso for i in range(num_pasos + 1)]
+                
+                # Asegurar que el último valor 'fin' esté en el array
+                if abs(secuencia[-1] - fin) > 1e-5:
+                    secuencia.append(fin)
+                    
+                return np.round(secuencia, 3)
+
             if tipo_paso == "Fijo":
-                # Cálculo con paso fijo
-                primer_nivel = np.ceil(H_min_auto / paso_h) * paso_h
-                H_vals = np.round(np.arange(primer_nivel, H_max + (paso_h * 0.1), paso_h), 3)
+                # Cálculo con paso fijo usando la función robusta
+                H_vals = generar_rango_redondeado(H_min_auto, H_max, paso_h)
+                
             else:
                 # Paso progresivo
-                # Asegurar que los límites estén dentro del rango
                 H_min_aforos = max(H_min_auto, H_min_aforos)
                 H_max_aforos = min(H_max, H_max_aforos)
                 
-                # --- Segmento inferior (desde H_min_auto hasta H_min_aforos) con paso grueso ---
-                primer_nivel_inf = np.ceil(H_min_auto / paso_grueso) * paso_grueso
-                if primer_nivel_inf < H_min_aforos:
-                    H_inf = np.arange(primer_nivel_inf, H_min_aforos + paso_grueso, paso_grueso)
-                    H_inf = H_inf[H_inf <= H_min_aforos]
-                else:
-                    H_inf = np.array([])
+                # --- Segmento inferior (desde H_min_auto hasta H_min_aforos) ---
+                H_inf = generar_rango_redondeado(H_min_auto, H_min_aforos, paso_grueso)
                 
                 # --- Segmento medio (aforos) con paso fino ---
-                H_med = np.arange(H_min_aforos, H_max_aforos + paso_fino, paso_fino)
-                H_med = H_med[(H_med >= H_min_aforos) & (H_med <= H_max_aforos)]
+                H_med = generar_rango_redondeado(H_min_aforos, H_max_aforos, paso_fino)
                 
-                # --- Segmento superior (desde H_max_aforos hasta H_max) con paso grueso ---
-                if H_max_aforos < H_max:
-                    H_sup = np.arange(H_max_aforos + paso_grueso, H_max + paso_grueso, paso_grueso)
-                    H_sup = H_sup[H_sup <= H_max]
-                else:
-                    H_sup = np.array([])
+                # --- Segmento superior (desde H_max_aforos hasta H_max) ---
+                H_sup = generar_rango_redondeado(H_max_aforos, H_max, paso_grueso)
                 
-                H_vals = np.round(np.concatenate([H_inf, H_med, H_sup]), 3)
-                H_vals = np.unique(H_vals)
+                # Concatenar y eliminar duplicados manteniendo el orden
+                H_vals = np.concatenate([H_inf, H_med, H_sup])
+                H_vals = np.unique(np.round(H_vals, 3))
             
-            if len(H_vals) == 0 or H_vals[0] > H_max:
+            # Asegurarse de que no haya valores mayores que H_max debido a redondeos
+            H_vals = H_vals[H_vals <= H_max]
+
+            if len(H_vals) == 0:
                 st.error("No hay niveles en el rango seleccionado. Ajusta el paso o el nivel máximo.")
             else:
                 data_geo = []
@@ -957,8 +976,8 @@ with tab2:
                     Pm = perimetro_mojado(abscisas_filt, cotas_filt, p_data['cota_cero'], H)
                     D = Am / Wh if Wh > 0 else 0
                     R = Am / Pm if Pm > 0 else 0
-                    # Relación R/D (útil para método Stevens)
                     relacion_RD = R / D if D > 0 else np.nan
+                    
                     data_geo.append({
                         "H (m)": H, 
                         "Wh (m)": Wh, 
@@ -967,7 +986,7 @@ with tab2:
                         "Pm (m)": Pm, 
                         "R (m)": R, 
                         "R2/3": R ** (2/3),
-                        "R/D": relacion_RD   # <--- NUEVA COLUMNA
+                        "R/D": relacion_RD
                     })
                 
                 st.session_state.df_geo = pd.DataFrame(data_geo)
@@ -978,7 +997,7 @@ with tab2:
                 fig_perfil_actualizado = crear_grafico_perfil(abscisas_filt, cotas_filt, p_data['cota_cero'], nivel_max=nivel_max_generado)
                 placeholder_perfil.plotly_chart(fig_perfil_actualizado, use_container_width=True)
         
-        if st.session_state.df_geo is not None:
+        if 'df_geo' in st.session_state and st.session_state.df_geo is not None:
             # --- INDICADOR DE RELACIÓN R/D (para validar método Stevens) ---
             df_geo = st.session_state.df_geo
             if "R/D" in df_geo.columns:
@@ -1007,8 +1026,9 @@ with tab2:
             
             # Mostrar la tabla de geometría (ahora con la columna R/D)
             st.dataframe(st.session_state.df_geo, use_container_width=True)
-            nivel_max_generado = st.session_state.df_geo["H (m)"].max()
-            st.metric("Nivel máximo generado", f"{nivel_max_generado:.2f} m")
+            if len(st.session_state.df_geo) > 0:
+                nivel_max_generado_final = st.session_state.df_geo["H (m)"].max()
+                st.metric("Nivel máximo generado", f"{nivel_max_generado_final:.2f} m")
 
 # ================== PESTAÑA 3: MÉTODO MANNING ==================
 with tab3:
