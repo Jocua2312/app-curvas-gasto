@@ -8,6 +8,8 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from scipy.interpolate import interp1d
+import pickle
+import datetime
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -460,6 +462,9 @@ if 'av_curve' not in st.session_state: st.session_state.av_curve = None
 if 'manning_error' not in st.session_state: st.session_state.manning_error = None
 if 'stevens_error' not in st.session_state: st.session_state.stevens_error = None
 if 'av_error' not in st.session_state: st.session_state.av_error = None
+# Inicializar banda de error global (por defecto Estable 10%)
+if 'banda_error_global' not in st.session_state:
+    st.session_state.banda_error_global = 10.0
 
 if 'opts_modelos_man' not in st.session_state: 
     st.session_state.opts_modelos_man = {"lineal": True, "exp": True, "log": True, "pot": True}
@@ -483,12 +488,80 @@ with st.sidebar:
             'manning_error_sigma', 'stevens_error_sigma', 'av_error_sigma',
             'manning_edited_df', 'stevens_edited_df', 'av_edited_df',
             'temp_aforos_activos', 'temp_perfil_activos', 'perfil_puntos_activos',
-            'df_aforos_activos', 'h0_seleccionados', 'metodo_definitivo'
+            'df_aforos_activos', 'h0_seleccionados', 'metodo_definitivo',"Curva_selec"
         ]
         for key in keys_to_reset:
             if key in st.session_state:
                 del st.session_state[key]
         st.rerun()
+
+# ==========================================
+# SECCIÓN EN LA BARRA LATERAL: GUARDAR/CARGAR
+# ==========================================
+with st.sidebar.expander("💾 Guardar / Cargar Proyecto", expanded=False):
+    st.markdown("Guarda tu progreso actual o carga un análisis previo.")
+    
+    # --- 1. BOTÓN PARA GUARDAR (EXPORTAR) ---
+    # AMPLIAMOS ESTA LISTA para incluir TODO tu progreso (Manning, Stevens, temporales, etc.)
+    claves_a_guardar = [
+        'df_aforos', 'df_aforos_activos', 'temp_aforos_activos', 'last_df_size',
+        'perfil_data', 'perfil_puntos_activos', 'temp_perfil_activos',
+        'df_geo', 'codigo_estacion',
+        'manning_data', 'manning_curve', 'manning_error', 'manning_error_sigma', 'manning_edited_df', 'opts_modelos_man',
+        'stevens_data', 'stevens_curve', 'stevens_error', 'stevens_error_sigma', 'stevens_edited_df',
+        'av_data', 'av_curve', 'av_error', 'av_error_sigma', 'av_edited_df',
+        'h0_seleccionados', 'metodo_definitivo',
+        'fecha_inicio', 'fecha_fin', 'fuente_k_radio','fuente_k_stevens','fuente_v_radio',
+        'metodo_select_manning','metodo_select_stevens', 'metodo_select_av',
+        'tipo_paso', 'paso_fijo','paso_fino','paso_grueso',
+        'usar_auto','H_max_manual','banda_error_global', "Curva_selec", 
+        'manning_h_quiebre', 'manning_modelo_inf', 'manning_modelo_sup',
+        'stevens_h_quiebre', 'stevens_modelo_inf', 'stevens_modelo_sup',
+        'av_h_quiebre', 'av_modelo_inf', 'av_modelo_sup',
+        # Añade también las claves de los radios de H0 si decides mantenerlas
+    ]
+    
+    datos_sesion = {k: st.session_state[k] for k in claves_a_guardar if k in st.session_state}
+    
+    if datos_sesion:
+        archivo_pkl = pickle.dumps(datos_sesion)
+        
+        # --- GENERAR NOMBRE DINÁMICO ---
+        nombre_estacion = "Estacion_Desconocida"
+        if 'perfil_data' in st.session_state and st.session_state.perfil_data is not None:
+            # Rescatamos el nombre y reemplazamos espacios por guiones bajos
+            nombre_estacion = str(st.session_state.perfil_data.get('estacion', 'Estacion')).replace(" ", "_")
+            
+        fecha_hoy = datetime.datetime.now().strftime("%Y%m%d")
+        nombre_archivo_dinamico = f"Proyecto_{nombre_estacion}_{fecha_hoy}.pkl"
+        
+        st.download_button(
+            label="⬇️ Descargar Análisis (.pkl)",
+            data=archivo_pkl,
+            file_name=nombre_archivo_dinamico,
+            mime="application/octet-stream",
+            use_container_width=True,
+            type="primary"
+        )
+    else:
+        st.info("Aún no hay datos cargados para guardar.")
+
+    st.markdown("---")
+
+    # --- 2. BOTÓN PARA CARGAR (IMPORTAR) ---
+    archivo_subido = st.file_uploader("📂 Cargar Análisis (.pkl)", type=["pkl"], key="uploader_proyecto")
+    
+    if archivo_subido is not None:
+        if st.button("🔄 Restaurar Sesión", use_container_width=True):
+            try:
+                datos_cargados = pickle.loads(archivo_subido.getvalue())
+                for clave, valor in datos_cargados.items():
+                    st.session_state[clave] = valor
+                
+                st.success(f"¡Proyecto restaurado con éxito!")
+                st.rerun() 
+            except Exception as e:
+                st.error(f"Error al cargar el archivo: {e}")
 
 # --- PROCESAMIENTO AFOROS ---
 if file_aforos is not None and st.session_state.df_aforos is None:
@@ -549,10 +622,11 @@ if file_perfil is not None and st.session_state.perfil_data is None:
     try:
         cota, x, y, est, cod, fecha, descs, tabs = leer_perfil_transversal_completo(file_perfil)
         st.session_state.perfil_data = {
-            'cota_cero': cota, 'abscisas': x, 'cotas': y, 
+            'cota_cero': cota, 'abscisas': x, 'cotas': y,
             'estacion': est, 'codigo': cod, 'fecha': fecha,
             'descripciones': descs, 'tablas': tabs
         }
+        st.session_state.codigo_estacion = cod  
     except Exception as e:
         st.sidebar.error(f"Error procesando el Perfil: {e}")
 
@@ -595,12 +669,17 @@ with tab1:
                 
                 with st.container():
                     col_f1, col_f2 = st.columns(2)
+                    # Inicializamos las variables en la memoria SOLO si no existen (ej. la primera vez que entras)
+                    if "fecha_inicio" not in st.session_state:
+                        st.session_state.fecha_inicio = min_date
+                    if "fecha_fin" not in st.session_state:
+                        st.session_state.fecha_fin = max_date
+
                     with col_f1:
-                        # Quitamos el 'key' para que no se quede pegado con fechas de análisis viejos
-                        f_inicio = st.date_input("Fecha Inicio:", min_date, min_value=min_date, max_value=max_date)
+                        # Quitamos el segundo argumento (el valor por defecto) y dejamos solo min/max y el key
+                        f_inicio = st.date_input("Fecha Inicio:", min_value=min_date, max_value=max_date, key="fecha_inicio")
                     with col_f2:
-                        # Quitamos el 'key' 
-                        f_fin = st.date_input("Fecha Fin:", max_date, min_value=min_date, max_value=max_date)
+                        f_fin = st.date_input("Fecha Fin:", min_value=min_date, max_value=max_date, key="fecha_fin")
 
                 # Aplicar filtro de fechas al DataFrame temporal (para visualización)
                 if f_inicio > f_fin:
@@ -636,24 +715,26 @@ with tab1:
         # Actualizar el DataFrame temporal con las ediciones (sin rerun aún)
         st.session_state.temp_aforos_activos.update(edited_temp)
 
-        # 5. Botones de acción
+# 5. Botones de acción
         col_apply, col_cancel = st.columns(2)
         with col_apply:
             if st.button("✅ Aplicar cambios en aforos", use_container_width=True):
-                # Actualizar el DataFrame global con las selecciones temporales
-                st.session_state.df_aforos.update(st.session_state.temp_aforos_activos[['Activo']])
-                # Recalcular aforos activos
-                aforos_para_modelos = st.session_state.temp_aforos_activos[
-                    st.session_state.temp_aforos_activos['Activo'] == True
-                ].copy()
+                
+                # LA MAGIA ESTÁ AQUÍ:
+                # Sacamos los aforos activos DIRECTAMENTE de 'edited_temp', 
+                # que es la tabla que ya tiene el filtro de fechas aplicado.
+                aforos_para_modelos = edited_temp[edited_temp['Activo'] == True].copy()
+                
+                # Los guardamos como los aforos oficiales para todas las pestañas
                 st.session_state.df_aforos_activos = aforos_para_modelos
-                st.success("Cambios aplicados a los aforos.")
-                st.rerun()
-        with col_cancel:
-            if st.button("❌ Cancelar cambios", use_container_width=True):
-                # Restaurar el temporal desde el global
-                st.session_state.temp_aforos_activos = st.session_state.df_aforos.copy()
-                st.rerun()
+                
+                # Actualizamos el DataFrame global original solo por consistencia (opcional)
+                st.session_state.df_aforos.update(aforos_para_modelos[['Activo']])
+                
+                # ---> SEÑAL PARA QUE MANNING SE ACTUALICE <---
+                st.session_state.flag_actualizar_modelos = True
+                
+                st.success("Cambios aplicados. Solo se usarán los aforos del rango de fechas seleccionado.")
 
         # --- CORRECCIÓN DEL RESUMEN VISUAL ---
         # Ahora lee directamente de 'edited_temp' que es el dataframe ya filtrado por el calendario
@@ -732,10 +813,12 @@ with tab2:
             mask = st.session_state.perfil_puntos_activos
             abscisas_filt = p_data['abscisas'][mask]
             cotas_filt = p_data['cotas'][mask]
+            desc_filt = np.array(p_data['descripciones'])[mask]  # para NAOI
             st.info(f"Usando {np.sum(mask)} de {len(mask)} puntos del perfil (según selección en 'Resumen Aforos').")
         else:
             abscisas_filt = p_data['abscisas']
             cotas_filt = p_data['cotas']
+            desc_filt = p_data['descripciones']
             st.warning("No hay selección de puntos activos. Usando todos los puntos del perfil.")
         
         # Verificar que haya puntos activos
@@ -743,13 +826,34 @@ with tab2:
             st.error("No hay puntos activos en el perfil. Activa al menos un punto en la pestaña 'Resumen Aforos'.")
             st.stop()
         
+        # Métricas de cabecera
         col1, col2, col3 = st.columns(3)
         col1.metric("Estación", f"{p_data['estacion']} ({p_data['codigo']})")
         col2.metric("Fecha Perfil", p_data['fecha'])
         col3.metric("Cota Cero", f"{p_data['cota_cero']:.3f} m")
         
+        # --- Obtener puntos NAOI ---
+        puntos_naoi = []
+        for i, desc in enumerate(desc_filt):
+            if desc and "NAOI" in desc.upper():
+                puntos_naoi.append({'abscisa': abscisas_filt[i], 'cota': cotas_filt[i]})
+        df_naoi = pd.DataFrame(puntos_naoi) if puntos_naoi else None
+
+        # --- Calcular nivel de agua a partir del primer punto NAOI (o promedio) ---
+        nivel_agua = None
+        if df_naoi is not None and not df_naoi.empty:
+            # Usar la cota del primer punto NAOI como referencia
+            cota_naoi = df_naoi['cota'].iloc[0]
+            nivel_agua = cota_naoi - p_data['cota_cero']
+            st.info(f"Nivel de agua NAOI detectado: {nivel_agua:.2f} m (cota {cota_naoi:.2f} m)")
+        
+        # --- Determinar nivel máximo para el gráfico inicial (persistencia) ---
+        nivel_max_inicial = None
+        if st.session_state.get('df_geo') is not None and not st.session_state.df_geo.empty:
+            nivel_max_inicial = st.session_state.df_geo['H (m)'].max()
+
         # --- Función para crear el gráfico del perfil ---
-        def crear_grafico_perfil(abscisas, cotas, cota_cero, nivel_max=None):
+        def crear_grafico_perfil(abscisas, cotas, cota_cero, nivel_max=None, nivel_agua=None, puntos_naoi=None):
             fig = go.Figure()
             fig.add_trace(go.Scatter(
                 x=abscisas, 
@@ -785,6 +889,26 @@ with tab2:
                     annotation_font_color="#2ecc71",
                     annotation_font_family="Arial"
                 )
+            if nivel_agua is not None:
+                cota_agua = cota_cero + nivel_agua
+                fig.add_hline(
+                    y=cota_agua,
+                    line_dash="solid",
+                    line_color="#3498db",
+                    line_width=2,
+                    annotation_text=f"Nivel agua: {nivel_agua:.2f} m",
+                    annotation_position="bottom left",
+                    annotation_font_size=12,
+                    annotation_font_color="#3498db"
+                )
+            if puntos_naoi is not None and not puntos_naoi.empty:
+                fig.add_trace(go.Scatter(
+                    x=puntos_naoi['abscisa'],
+                    y=puntos_naoi['cota'],
+                    mode='markers',
+                    name='NAOI',
+                    marker=dict(color='#f1c40f', size=12, symbol='star', line=dict(color='black', width=1))
+                ))
             fig.update_layout(
                 title="Sección Transversal - Perfil del Terreno",
                 xaxis_title="Abscisa (m)",
@@ -803,101 +927,93 @@ with tab2:
             y_max = max(cotas.max(), cota_cero) + 1
             if nivel_max is not None:
                 y_max = max(y_max, cota_cero + nivel_max + 1)
+            if nivel_agua is not None:
+                y_max = max(y_max, cota_agua + 1)
             fig.update_yaxes(range=[y_min, y_max])
             return fig
         
-        # Mostrar gráfico inicial con puntos filtrados
-        fig_perfil = crear_grafico_perfil(abscisas_filt, cotas_filt, p_data['cota_cero'], nivel_max=None)
+        # Mostrar gráfico con nivel máximo persistente y nivel de agua NAOI (si existe)
+        fig_perfil = crear_grafico_perfil(
+            abscisas_filt, cotas_filt, p_data['cota_cero'],
+            nivel_max=nivel_max_inicial,
+            nivel_agua=nivel_agua,
+            puntos_naoi=df_naoi
+        )
         placeholder_perfil = st.plotly_chart(fig_perfil, use_container_width=True, key="perfil_plot")
         
         st.markdown("---")
         
-        # --- Cálculo de niveles mínimos y máximos (solo una vez) ---
+# --- Cálculo de niveles mínimos y máximos ---
         cota_min_lecho = float(cotas_filt.min())
-        H_min_auto = float(max(0, cota_min_lecho - p_data['cota_cero']))
         
-        # Parámetro: porcentaje de puntos a considerar en cada borde (puedes cambiarlo a un input si deseas)
-        porcentaje_borde = 10  # 10% de los puntos en cada extremo
+        # 1. Calculamos la distancia real entre cota cero y el lecho (para mostrarla)
+        distancia_lecho = float(cota_min_lecho - p_data['cota_cero']) 
+        
+        # 2. Forzamos el inicio del cálculo de la tabla desde la Cota Cero (H = 0)
+        H_min_calc = 0.0 
+
+        porcentaje_borde = 15
         n_puntos = len(abscisas_filt)
         n_borde = max(1, int(n_puntos * porcentaje_borde / 100))
 
-        # Ordenar puntos por abscisa (por si acaso no lo están)
         indices_orden = np.argsort(abscisas_filt)
         abscisas_ordenadas = abscisas_filt[indices_orden]
         cotas_ordenadas = cotas_filt[indices_orden]
 
-        # Lado izquierdo: primeros n_borde puntos
         cotas_izq = cotas_ordenadas[:n_borde]
         cota_izq_max = float(np.max(cotas_izq))
 
-        # Lado derecho: últimos n_borde puntos
         cotas_der = cotas_ordenadas[-n_borde:]
         cota_der_max = float(np.max(cotas_der))
 
         cota_desborde = float(min(cota_izq_max, cota_der_max))
         H_max_auto = float(cota_desborde - p_data['cota_cero'])
         
-        # Validar que los valores sean finitos
-        if not (np.isfinite(H_min_auto) and np.isfinite(H_max_auto)):
+        if not (np.isfinite(distancia_lecho) and np.isfinite(H_max_auto)):
             st.error("No se pudieron calcular niveles válidos. Verifica los puntos activos del perfil.")
             st.stop()
         
-        st.info(f"**Nivel mínimo (lecho):** {H_min_auto:.2f} m | **Nivel máximo por desbordamiento:** {H_max_auto:.2f} m\n\n"
+        # 3. Actualizamos el cuadro informativo manteniendo el signo de la distancia
+        st.info(f"**Distancia de Cota Cero al lecho:** {distancia_lecho:.2f} m | **Nivel máximo por desbordamiento (H):** {H_max_auto:.2f} m\n\n"
                 f"Cota máxima en el {porcentaje_borde}% izquierdo: {cota_izq_max:.2f} m, derecho: {cota_der_max:.2f} m")
 
         # --- Opciones de rango ---
-        usar_auto = st.checkbox("Usar nivel máximo automático (desbordamiento)", value=True)
+        usar_auto = st.checkbox("Usar nivel máximo automático (desbordamiento)", value=True, key="usar_auto")
         if usar_auto:
             H_max = H_max_auto
             st.caption(f"Se usará H_max = {H_max:.2f} m")
         else:
-            # Calcular valores asegurando que sean finitos
-            min_val = H_min_auto
-            # Calcular cota máxima topográfica
+            # 4. Ajustamos los límites del control manual para que parta desde H=0
+            min_val = H_min_calc 
             cota_max_top = float(np.nanmax(cotas_filt))
             max_val_calc = float(cota_max_top - p_data['cota_cero'])
             
-            # Si max_val_calc no es finito, usar H_max_auto como límite
             if not np.isfinite(max_val_calc):
                 max_val = H_max_auto
                 st.warning("El valor máximo calculado no es finito. Se usará el nivel de desbordamiento como límite.")
             else:
                 max_val = max_val_calc
-            
-            # Asegurar que default_val esté dentro del rango y sea finito
+                
             default_val = H_max_auto
             if default_val < min_val:
                 default_val = min_val
             elif default_val > max_val:
                 default_val = max_val
-            
-            # Convertir todo a float de Python estándar
-            min_val = float(min_val)
-            max_val = float(max_val)
-            default_val = float(default_val)
-            step_val = 0.1
-            
+                
             H_max_manual = st.number_input(
                 "Nivel máximo deseado (m):",
-                min_value=min_val,
-                max_value=max_val,
-                value=default_val,
-                step=step_val,
-                format="%.2f"
+                min_value=float(min_val),
+                max_value=float(max_val),
+                value=float(default_val),
+                step=0.1,
+                format="%.2f", key="H_max_manual"
             )
             H_max = H_max_manual
             if H_max > H_max_auto:
                 st.warning(f"El nivel ingresado ({H_max:.2f} m) supera el nivel de desbordamiento. La sección ya no confinaría el flujo.")
-
+        
         # --- Opciones de paso ---
-        tipo_paso = st.radio(
-            "Tipo de paso:",
-            options=["Fijo", "Progresivo"],
-            index=0,
-            horizontal=True,
-            key="tipo_paso"
-        )
-
+        tipo_paso = st.radio("Tipo de paso:", options=["Fijo", "Progresivo"], index=0, horizontal=True, key="tipo_paso")
         if tipo_paso == "Fijo":
             paso_h = st.number_input("Paso de Nivel (H) en metros:", value=0.2, min_value=0.05, step=0.05, key="paso_fijo")
         else:
@@ -906,70 +1022,43 @@ with tab2:
                 paso_fino = st.number_input("Paso fino (dentro de aforos):", value=0.1, min_value=0.01, step=0.05, key="paso_fino")
             with col_paso2:
                 paso_grueso = st.number_input("Paso grueso (fuera de aforos):", value=0.5, min_value=0.1, step=0.1, key="paso_grueso")
-            
-            # Obtener rango de aforos activos (si existen)
             if 'df_aforos_activos' in st.session_state and st.session_state.df_aforos_activos is not None and not st.session_state.df_aforos_activos.empty:
                 H_aforos = st.session_state.df_aforos_activos["H_m"].values
                 H_min_aforos = H_aforos.min()
                 H_max_aforos = H_aforos.max()
                 st.caption(f"Rango de aforos activos: {H_min_aforos:.2f} - {H_max_aforos:.2f} m")
             else:
-                H_min_aforos = H_min_auto
+                # 5. Si no hay aforos, el rango empieza en H=0
+                H_min_aforos = H_min_calc
                 H_max_aforos = H_max_auto
                 st.warning("No hay aforos activos, se usará el rango completo con paso fino.")
         
         if st.button("Generar Tabla de Geometría"):
             def generar_rango_redondeado(inicio, fin, paso):
-                """
-                Genera un array de valores asegurando que sean múltiplos exactos del paso
-                y que el último valor (fin) siempre esté incluido.
-                """
                 if inicio >= fin:
                     return np.array([fin])
-                
-                # Encontrar el primer múltiplo exacto del paso que sea >= inicio
                 primer_multiplo = np.ceil(inicio / paso) * paso
-                
-                # Usar linspace en lugar de arange para evitar errores de precisión decimal
                 num_pasos = int(np.floor(round((fin - primer_multiplo) / paso, 5)))
-                
                 if num_pasos < 0:
                     return np.array([fin])
-                    
-                # Generar secuencia
                 secuencia = [primer_multiplo + i * paso for i in range(num_pasos + 1)]
-                
-                # Asegurar que el último valor 'fin' esté en el array
                 if abs(secuencia[-1] - fin) > 1e-5:
                     secuencia.append(fin)
-                    
                 return np.round(secuencia, 3)
 
+            # 6. Reemplazamos todos los H_min_auto por H_min_calc (que es 0.0) para la creación de rangos
             if tipo_paso == "Fijo":
-                # Cálculo con paso fijo usando la función robusta
-                H_vals = generar_rango_redondeado(H_min_auto, H_max, paso_h)
-                
+                H_vals = generar_rango_redondeado(H_min_calc, H_max, paso_h)
             else:
-                # Paso progresivo
-                H_min_aforos = max(H_min_auto, H_min_aforos)
+                H_min_aforos = max(H_min_calc, H_min_aforos)
                 H_max_aforos = min(H_max, H_max_aforos)
-                
-                # --- Segmento inferior (desde H_min_auto hasta H_min_aforos) ---
-                H_inf = generar_rango_redondeado(H_min_auto, H_min_aforos, paso_grueso)
-                
-                # --- Segmento medio (aforos) con paso fino ---
+                H_inf = generar_rango_redondeado(H_min_calc, H_min_aforos, paso_grueso)
                 H_med = generar_rango_redondeado(H_min_aforos, H_max_aforos, paso_fino)
-                
-                # --- Segmento superior (desde H_max_aforos hasta H_max) ---
                 H_sup = generar_rango_redondeado(H_max_aforos, H_max, paso_grueso)
-                
-                # Concatenar y eliminar duplicados manteniendo el orden
                 H_vals = np.concatenate([H_inf, H_med, H_sup])
                 H_vals = np.unique(np.round(H_vals, 3))
             
-            # Asegurarse de que no haya valores mayores que H_max debido a redondeos
             H_vals = H_vals[H_vals <= H_max]
-
             if len(H_vals) == 0:
                 st.error("No hay niveles en el rango seleccionado. Ajusta el paso o el nivel máximo.")
             else:
@@ -982,7 +1071,6 @@ with tab2:
                     D = Am / Wh if Wh > 0 else 0
                     R = Am / Pm if Pm > 0 else 0
                     relacion_RD = R / D if D > 0 else np.nan
-                    
                     data_geo.append({
                         "H (m)": H, 
                         "Wh (m)": Wh, 
@@ -993,15 +1081,20 @@ with tab2:
                         "R2/3": R ** (2/3),
                         "R/D": relacion_RD
                     })
-                
                 st.session_state.df_geo = pd.DataFrame(data_geo)
                 nivel_max_generado = H_vals[-1]
                 st.success(f"Tabla generada correctamente. Primer nivel: {H_vals[0]:.2f} m, último nivel: {nivel_max_generado:.2f} m")
                 
-                # Actualizar gráfico con nivel máximo
-                fig_perfil_actualizado = crear_grafico_perfil(abscisas_filt, cotas_filt, p_data['cota_cero'], nivel_max=nivel_max_generado)
+                # Actualizar gráfico con el nuevo nivel máximo y el nivel de agua NAOI
+                fig_perfil_actualizado = crear_grafico_perfil(
+                    abscisas_filt, cotas_filt, p_data['cota_cero'],
+                    nivel_max=nivel_max_generado,
+                    nivel_agua=nivel_agua,
+                    puntos_naoi=df_naoi
+                )
                 placeholder_perfil.plotly_chart(fig_perfil_actualizado, use_container_width=True)
         
+        # Mostrar tabla de geometría si existe 
         if 'df_geo' in st.session_state and st.session_state.df_geo is not None:
             # --- INDICADOR DE RELACIÓN R/D (para validar método Stevens) ---
             df_geo = st.session_state.df_geo
@@ -1056,7 +1149,13 @@ with tab3:
             > *Limitación:* La validez de la extrapolación depende de que la relación S^(1/2)/n se mantenga realmente constante en el rango de niveles altos. Se recomienda revisar los resultados con los aforos disponibles.
             """)
         
-        if st.session_state.manning_data is None:
+        # --- AQUÍ ESTÁ LA CORRECCIÓN: Escuchamos la alarma de la Pestaña 1 ---
+        necesita_actualizar = (
+            st.session_state.get('manning_data') is None 
+            or st.session_state.get('flag_actualizar_modelos', False)
+        )
+
+        if necesita_actualizar:
             # 1. RECIBIR AFOROS FILTRADOS (Ya vienen limpios de la Pestaña 1)
             if 'df_aforos_activos' in st.session_state:
                 df_a = st.session_state.df_aforos_activos.copy()
@@ -1119,11 +1218,21 @@ with tab3:
                     })
             
             st.session_state.manning_data = pd.DataFrame(datos_manning)
+            
+            # --- APAGAMOS LA ALARMA Y RESETEAMOS LA TABLA VISUAL ---
+            st.session_state.flag_actualizar_modelos = False
+            if 'manning_edited_df' in st.session_state:
+                del st.session_state['manning_edited_df']
+
+        idx_fuente = 0
+        if "fuente_k_radio" in st.session_state:
+            if st.session_state.fuente_k_radio == "K del perfil":
+                idx_fuente = 1
 
         fuente_k = st.radio(
             "Fuente de K:",
             options=["K de aforos", "K del perfil"],
-            index=0,
+            index=idx_fuente, 
             horizontal=True,
             key="fuente_k_radio"
         )
@@ -1152,22 +1261,22 @@ with tab3:
         col_btn, _ = st.columns([0.1, 0.9])
         with col_btn:
             with st.popover("⚙️ Controles"):
-                st.caption("Filtro de Aforos")
                 with st.form(key="manning_form"):
+                    st.caption("Filtro de Aforos")
                     edited = st.data_editor(
-                        st.session_state.manning_edited_df,
+                        st.session_state.manning_edited_df[["Incluir", "ID", "H", "Q"]],
                         column_config={
-                            "Incluir": st.column_config.CheckboxColumn("Activo", default=True, width="small"),
-                            "ID": st.column_config.NumberColumn("ID", disabled=True, width="small"),
-                            "H": st.column_config.NumberColumn("H", disabled=True, format="%.2f", width="small"),
-                            "Q": st.column_config.NumberColumn("Q", disabled=True, format="%.2f", width="small"),
-                            "V_af": None, "RH": None, "R23_af": None, "K_af": None, "K_per": None, "K": None
+                            "Incluir": st.column_config.CheckboxColumn("Activo", default=True),
+                            "ID": st.column_config.NumberColumn("ID", disabled=True),
+                            "H": st.column_config.NumberColumn("H (m)", disabled=True, format="%.2f"),
+                            "Q": st.column_config.NumberColumn("Q (m³/s)", disabled=True, format="%.2f"),
                         },
                         disabled=False,
                         hide_index=True,
                         use_container_width=True,
                         key="manning_editor"
                     )
+
                     st.caption("Modelos de ajuste")
                     lineal = st.checkbox("Lineal", value=st.session_state.opts_modelos_man["lineal"])
                     exp = st.checkbox("Exponencial", value=st.session_state.opts_modelos_man["exp"])
@@ -1175,10 +1284,14 @@ with tab3:
                     pot = st.checkbox("Potencial", value=st.session_state.opts_modelos_man["pot"])
 
                     st.caption("Configuración General")
-                    banda_input = st.number_input("Banda de Validación (%)", 
-                                                  min_value=1.0, max_value=50.0, 
-                                                  value=float(st.session_state.banda_error_global), 
-                                                  step=1.0)
+                    opciones_banda = ["Estable (10%)", "Inestable (15%)"]
+                    indice_actual = 0 if st.session_state.banda_error_global == 10 else 1
+                    tipo_seccion = st.radio(
+                        "Tipo de sección:",
+                        options=opciones_banda,
+                        index=indice_actual,
+                        horizontal=True
+                    )
 
                     col1, col2 = st.columns(2)
                     with col1:
@@ -1192,7 +1305,10 @@ with tab3:
                         st.session_state.opts_modelos_man["exp"] = exp
                         st.session_state.opts_modelos_man["log"] = log
                         st.session_state.opts_modelos_man["pot"] = pot
-                        st.session_state.banda_error_global = banda_input
+                        if tipo_seccion == "Estable (10%)":
+                            st.session_state.banda_error_global = 10.0
+                        else:
+                            st.session_state.banda_error_global = 15.0
                         st.rerun()
                     elif cancelled:
                         st.rerun()
@@ -1213,10 +1329,21 @@ with tab3:
         mostrar_log = st.session_state.opts_modelos_man["log"]
         mostrar_pot = st.session_state.opts_modelos_man["pot"]
 
-        # --- Separar activos e inactivos ---
-        activos = edited_manning[edited_manning["Incluir"] == True].copy()
-        inactivos = edited_manning[edited_manning["Incluir"] == False].copy()
+        # Obtener DataFrame original completo
+        df_original = st.session_state.manning_data.copy()
 
+        # Obtener DataFrame editado (solo Incluir, ID, H, Q)
+        df_edit = st.session_state.manning_edited_df.copy()
+
+        # IDs activos e inactivos según el editor
+        ids_activos = df_edit[df_edit["Incluir"] == True]["ID"].values
+        ids_inactivos = df_edit[df_edit["Incluir"] == False]["ID"].values
+
+        # Filtrar el original
+        activos = df_original[df_original["ID"].isin(ids_activos)].copy()
+        inactivos = df_original[df_original["ID"].isin(ids_inactivos)].copy()
+
+        # Asignar K según la fuente seleccionada
         if fuente_k == "K de aforos":
             activos["K"] = activos["K_af"]
             inactivos["K"] = inactivos["K_af"]
@@ -1224,6 +1351,7 @@ with tab3:
             activos["K"] = activos["K_per"]
             inactivos["K"] = inactivos["K_per"]
 
+        # Filtrar valores válidos (K > 0)
         activos = activos[activos["K"] > 0].dropna(subset=["K"])
         inactivos = inactivos[inactivos["K"] > 0].dropna(subset=["K"])
 
@@ -1239,6 +1367,9 @@ with tab3:
             
             # --- Interpoladores de geometría para simulación de Q ---
             df_g = st.session_state.df_geo.copy()
+            H_min_geo = df_g["H (m)"].min()
+            H_max_geo = df_g["H (m)"].max()
+            
             interp_R23 = interp1d(df_g["H (m)"], df_g["R2/3"], kind='linear', fill_value='extrapolate')
             interp_Am = interp1d(df_g["H (m)"], df_g["Am (m2)"], kind='linear', fill_value='extrapolate')
             R23_act = interp_R23(X_val)
@@ -1300,35 +1431,102 @@ with tab3:
                     v["Sigma_q"] = np.nan
 
             # --- Selector de método y tabla de modelos ---
-            col_metodo, col_modelos = st.columns([1, 2])
-            with col_metodo:
-                metodo_seleccionado = st.selectbox(
-                    "Método Matemático:",
-                    ["Automático (Menor MAPE)", "Potencial", "Logarítmica", "Exponencial", "Lineal"],
-                    key="metodo_select_manning"
-                )
-            with col_modelos:
-                st.subheader("Comparación de modelos")
-                df_modelos = pd.DataFrame([
-                    {
-                        "Modelo": k, 
-                        "r": f"{v['r']:.4f}", 
-                        "R²": f"{v['R2']:.4f}", 
-                        "MAPE (%)": f"{v['MAPE']:.2f}" if pd.notna(v['MAPE']) else "N/A",
-                        "σq (%)": f"{v['Sigma_q']:.2f}" if pd.notna(v['Sigma_q']) else "N/A",
-                        "Ecuación": v['eq']
-                    }
-                    for k, v in ajustes.items()
-                ])
-                # Ordenar por MAPE (menor primero)
-                df_modelos['MAPE_num'] = pd.to_numeric(df_modelos['MAPE (%)'], errors='coerce')
-                df_modelos = df_modelos.sort_values('MAPE_num', na_position='last').drop(columns=['MAPE_num'])
-                st.dataframe(df_modelos, use_container_width=True, hide_index=True)
+            # 1. Añadimos la opción de Curva Compuesta al menú
+            opciones_metodo = ["Automático (Menor MAPE)", "Potencial", "Logarítmica", "Exponencial", "Lineal", "Compuesta (Por tramos)"]
+            idx_metodo = 0
+            if "metodo_select_manning" in st.session_state:
+                if st.session_state.metodo_select_manning in opciones_metodo:
+                    idx_metodo = opciones_metodo.index(st.session_state.metodo_select_manning)
 
-            # Seleccionar modelo
+            st.markdown("---")
+            metodo_seleccionado = st.selectbox(
+                "Método Matemático Principal:",
+                opciones_metodo,
+                index=idx_metodo,
+                key="metodo_select_manning"
+            )
+
+            # 2. Lógica UI si selecciona la Compuesta
+            if metodo_seleccionado == "Compuesta (Por tramos)":
+                st.markdown("#### 🔀 Configuración de Curva Compuesta")
+                col_c1, col_c2, col_c3 = st.columns(3)
+
+                h_min_safe = float(H_act.min()) if len(H_act) > 0 else 0.0
+                h_max_safe = float(H_max_geo)
+                h_med_safe = float(np.median(H_act)) if len(H_act) > 0 else 1.0
+
+                with col_c1:
+                    h_quiebre = st.number_input(
+                        "Nivel de Quiebre (H en m)",
+                        min_value=h_min_safe,
+                        max_value=h_max_safe,
+                        value=st.session_state.get('manning_h_quiebre', h_med_safe),
+                        step=0.1,
+                        key='manning_h_quiebre'
+                    )
+                with col_c2:
+                    modelo_inf = st.selectbox(
+                        "Modelo Inferior (H < Quiebre)",
+                        ["Potencial", "Logarítmica", "Exponencial", "Lineal"],
+                        key='manning_modelo_inf'
+                    )
+                with col_c3:
+                    modelo_sup = st.selectbox(
+                        "Modelo Superior (H ≥ Quiebre)",
+                        ["Exponencial", "Lineal", "Potencial", "Logarítmica"],
+                        key='manning_modelo_sup'
+                    )
+
+                # Definir la función compuesta usando los valores actuales de session_state
+                def func_compuesta(x):
+                    h_q = st.session_state.manning_h_quiebre
+                    m_inf = st.session_state.manning_modelo_inf
+                    m_sup = st.session_state.manning_modelo_sup
+                    f_inf = ajustes[m_inf]["func"] if m_inf in ajustes else ajustes.get("Lineal")["func"]
+                    f_sup = ajustes[m_sup]["func"] if m_sup in ajustes else ajustes.get("Lineal")["func"]
+                    return np.where(x < h_q, f_inf(x), f_sup(x))
+                
+                # Calculamos el error de esta nueva curva inventada
+                K_est_comp = func_compuesta(X_val)
+                Q_est_comp = K_est_comp * R23_act * Am_act
+                mask_err_comp = (Q_act != 0) & np.isfinite(Q_est_comp)
+                
+                if np.any(mask_err_comp):
+                    mape_comp = np.mean(np.abs((Q_est_comp[mask_err_comp] - Q_act[mask_err_comp]) / Q_act[mask_err_comp])) * 100
+                    sigma_comp = calcular_error_procedimiento(Q_act[mask_err_comp], Q_est_comp[mask_err_comp], K=2)
+                else:
+                    mape_comp, sigma_comp = np.nan, np.nan
+                
+                # Inyectamos nuestro nuevo modelo compuesto en el diccionario de 'ajustes'
+                ajustes["Compuesta (Por tramos)"] = {
+                    "func": func_compuesta,
+                    "eq": f"{modelo_inf} (<{h_quiebre:.2f}m) y {modelo_sup} (≥{h_quiebre:.2f}m)",
+                    "MAPE": mape_comp,
+                    "Sigma_q": sigma_comp,
+                    "r": np.nan, "R2": np.nan # R2 estadístico tradicional no aplica directo a piecewise
+                }
+
+            # 3. Mostrar la tabla comparativa de los modelos
+            st.subheader("Comparación de modelos")
+            df_modelos = pd.DataFrame([
+                {
+                    "Modelo": k, 
+                    "r": f"{v['r']:.4f}" if pd.notna(v['r']) else "-", 
+                    "R²": f"{v['R2']:.4f}" if pd.notna(v['R2']) else "-", 
+                    "Error Absoluto (%)": f"{v['MAPE']:.2f}" if pd.notna(v['MAPE']) else "N/A",
+                    "σq (%)": f"{v['Sigma_q']:.2f}" if pd.notna(v['Sigma_q']) else "N/A",
+                    "Ecuación": v['eq']
+                }
+                for k, v in ajustes.items()
+            ])
+            df_modelos['MAPE_num'] = pd.to_numeric(df_modelos['Error Absoluto (%)'], errors='coerce')
+            df_modelos = df_modelos.sort_values('MAPE_num', na_position='last').drop(columns=['MAPE_num'])
+            st.dataframe(df_modelos, use_container_width=True, hide_index=True)
+
+            # 4. Seleccionar modelo definitivo
             if metodo_seleccionado == "Automático (Menor MAPE)":
                 mejor_modelo = min(
-                    (k for k in ajustes if pd.notna(ajustes[k]["MAPE"])),
+                    (k for k in ajustes if pd.notna(ajustes[k]["MAPE"]) and k != "Compuesta (Por tramos)"),
                     key=lambda k: ajustes[k]["MAPE"],
                     default=list(ajustes.keys())[0]
                 )
@@ -1336,12 +1534,12 @@ with tab3:
                 mejor_modelo = metodo_seleccionado
             
             funcion_optima = ajustes[mejor_modelo]["func"]
-            st.info(f"Modelo seleccionado: **{mejor_modelo}** con MAPE = {ajustes[mejor_modelo]['MAPE']:.2f}% (R² = {ajustes[mejor_modelo]['R2']:.4f})")
+            
+            # Formateo seguro para R2 en el mensaje (la compuesta tiene np.nan)
+            r2_display = f" (R² = {ajustes[mejor_modelo]['R2']:.4f})" if pd.notna(ajustes[mejor_modelo]['R2']) else ""
+            st.info(f"Modelo seleccionado (Línea principal): **{mejor_modelo}** con Error Absoluto = {ajustes[mejor_modelo]['MAPE']:.2f}%{r2_display}")
 
             # --- Aplicar a geometría (extrapolación) ---
-            df_g = st.session_state.df_geo.copy()
-            H_min_geo = df_g["H (m)"].min()
-            H_max_geo = df_g["H (m)"].max()
             paso_fino = 0.2
             H_fino = np.arange(H_min_geo, H_max_geo + paso_fino, paso_fino)
             
@@ -1381,14 +1579,10 @@ with tab3:
 
             # --- Preparar funciones adicionales para la gráfica K vs H ---
             funcs_adic = {}
-            if 'Lineal' in ajustes:
-                funcs_adic['lineal'] = (ajustes['Lineal']['func'], mostrar_lineal)
-            if 'Exponencial' in ajustes:
-                funcs_adic['exp'] = (ajustes['Exponencial']['func'], mostrar_exp)
-            if 'Logarítmica' in ajustes:
-                funcs_adic['log'] = (ajustes['Logarítmica']['func'], mostrar_log)
-            if 'Potencial' in ajustes:
-                funcs_adic['pot'] = (ajustes['Potencial']['func'], mostrar_pot)
+            if 'Lineal' in ajustes: funcs_adic['lineal'] = (ajustes['Lineal']['func'], mostrar_lineal)
+            if 'Exponencial' in ajustes: funcs_adic['exp'] = (ajustes['Exponencial']['func'], mostrar_exp)
+            if 'Logarítmica' in ajustes: funcs_adic['log'] = (ajustes['Logarítmica']['func'], mostrar_log)
+            if 'Potencial' in ajustes: funcs_adic['pot'] = (ajustes['Potencial']['func'], mostrar_pot)
 
             H_smooth = np.linspace(min(X_val)*0.5, max(X_val)*1.5, 200)
             K_sel = funcion_optima(H_smooth)
@@ -1411,7 +1605,7 @@ with tab3:
             )
             placeholder_k.plotly_chart(fig_k, use_container_width=True)
 
-            # --- Gráfica Curva de Gasto con banda global ---
+            # --- Gráfica Curva de Gasto con banda global Y TODOS LOS MODELOS ACTIVOS ---
             fig_q = crear_figura_curva(
                 titulo=f"Curva de Gasto - usando {fuente_k}",
                 H_fino=H_fino,
@@ -1425,26 +1619,48 @@ with tab3:
                 color_banda=color_banda,
                 banda_pct=st.session_state.banda_error_global
             )
+            
+            # AGREGAR MODELOS ADICIONALES A LA CURVA DE GASTO
+            colores_extras = {'Lineal': 'cyan', 'Exponencial': 'magenta', 'Logarítmica': 'yellow', 'Potencial': 'lime'}
+            mapa_nombres = {'Lineal': mostrar_lineal, 'Exponencial': mostrar_exp, 'Logarítmica': mostrar_log, 'Potencial': mostrar_pot}
+            
+            for nombre_mod, dict_mod in ajustes.items():
+                # Si el usuario lo tiene chuleado en controles y NO es el modelo principal
+                if mapa_nombres.get(nombre_mod, False) and nombre_mod != mejor_modelo:
+                    K_extra = dict_mod["func"](H_fino)
+                    Q_extra = K_extra * interp_R23(H_fino) * interp_Am(H_fino)
+                    Q_extra = np.maximum(Q_extra, 0)
+                    
+                    fig_q.add_trace(go.Scatter(
+                        x=Q_extra, y=H_fino, mode='lines', name=f'Q ({nombre_mod})',
+                        line=dict(color=colores_extras[nombre_mod], width=2, dash='dot')
+                    ))
+
             placeholder_q.plotly_chart(fig_q, use_container_width=True)
 
-            # --- Calcular errores individuales usando la función pura del modelo ---
+            # --- NUEVA TABLA DE ERRORES CON TODOS LOS MODELOS ---
             errores_data = []
             for _, row in activos.iterrows():
                 h_val = row["H"]
                 q_obs = row["Q"]
-                k_est = funcion_optima(h_val)
                 r23_val = float(interp_R23(h_val))
                 am_val = float(interp_Am(h_val))
-                q_est = k_est * r23_val * am_val
-                err_pct = abs(q_est - q_obs) / q_obs * 100 if q_obs != 0 else np.nan
-                errores_data.append({
+                
+                fila_error = {
                     "H (m)": h_val, 
-                    "Q Estimado (m³/s)": q_est,
-                    "Q Aforado (m³/s)": q_obs, 
-                    "Error %": err_pct
-                })
+                    "Q Aforado (m³/s)": q_obs
+                }
+                
+                # Calcular el error para cada modelo matemático
+                for nombre_mod, dict_mod in ajustes.items():
+                    k_est = dict_mod["func"](h_val)
+                    q_est = k_est * r23_val * am_val
+                    err_pct = abs(q_est - q_obs) / q_obs * 100 if q_obs != 0 else np.nan
+                    fila_error[f"Error {nombre_mod} (%)"] = err_pct
+                    
+                errores_data.append(fila_error)
 
-            # --- Obtener errores del mejor modelo ---
+            # --- Obtener errores globales del mejor modelo ---
             prom_mape = ajustes[mejor_modelo]["MAPE"]
             prom_sigma = ajustes[mejor_modelo]["Sigma_q"]
 
@@ -1456,21 +1672,56 @@ with tab3:
                         st.session_state.manning_curve = pd.DataFrame({"H": H_fino, "Q": Q_suave})
                         st.session_state.manning_error = prom_mape
                         st.session_state.manning_error_sigma = prom_sigma
-                        st.success("Curva guardada")
+                        st.success("Curva guardada en la sesión.")
                     else:
                         st.error("No hay curva válida")
+                
+                # --- LA MAGIA DE LA RESTAURACIÓN ---
+                if "manning_curve" in st.session_state and st.session_state.manning_curve is not None:
+                    st.success("✅ Curva definitiva cargada en memoria")
+                    with st.expander("Ver tabla guardada"):
+                        st.dataframe(st.session_state.manning_curve, height=150, use_container_width=True)
             with col_mape:
-                st.metric("MAPE Promedio", f"{prom_mape:.1f}%" if pd.notna(prom_mape) else "N/A")
+                st.metric("Error Absoluto Promedio", f"{prom_mape:.1f}%" if pd.notna(prom_mape) else "N/A")
             with col_sigma:
                 st.metric("Error Procedimiento (σq)", f"{prom_sigma:.1f}%" if pd.notna(prom_sigma) else "N/A")
 
-            # --- Tabla de errores ---
+            # --- Tabla de errores (SEMÁFORO) ---
             st.markdown("---")
-            st.subheader("Errores en aforos activos")
+            st.subheader("Errores en aforos activos (Todos los modelos)")
+            
             df_errores = pd.DataFrame(errores_data)
-            st.dataframe(df_errores.style.format({"H (m)": "{:.2f}", "Q Estimado (m³/s)": "{:.2f}",
-                                                   "Q Aforado (m³/s)": "{:.2f}", "Error %": "{:.1f}"}),
-                         use_container_width=True, hide_index=True)
+            
+            # --- ORDENAR LA TABLA POR H DE MENOR A MAYOR ---
+            df_errores = df_errores.sort_values(by="H (m)", ascending=True).reset_index(drop=True)
+            
+            # Identificar qué columnas contienen la palabra "Error"
+            cols_error = [col for col in df_errores.columns if "Error" in col]
+            
+            # Función para aplicar la regla de color semáforo
+            def color_semaforo(val):
+                if pd.isna(val):
+                    return ''
+                try:
+                    v = float(val)
+                    if v <= 10:
+                        return 'background-color: rgba(39, 174, 96, 0.4); color: white;' # Verde
+                    elif v <= 50:
+                        return 'background-color: rgba(243, 156, 18, 0.4); color: white;' # Amarillo
+                    else:
+                        return 'background-color: rgba(192, 57, 43, 0.4); color: white;' # Rojo
+                except:
+                    return ''
+
+            # Diccionario para redondear correctamente
+            format_dict = {"H (m)": "{:.2f}", "Q Aforado (m³/s)": "{:.2f}"}
+            for c in cols_error:
+                format_dict[c] = "{:.1f}"
+                
+            # Aplicar formato numérico y aplicar colores solo a las columnas de error
+            styled_df = df_errores.style.format(format_dict).map(color_semaforo, subset=cols_error)
+            
+            st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
 # ================== PESTAÑA 4: MÉTODO STEVENS ==================
 with tab4:
@@ -1480,8 +1731,7 @@ with tab4:
         # --- ENCABEZADO INFORMATIVO DEL MÉTODO ---
         with st.expander("📘 **Fundamento y consideraciones del método Stevens**", expanded=False):
             st.markdown("""
-            **Fundamento:**  
-            Este método es adecuado para ríos considerablemente anchos y poco profundos, donde la profundidad media (D) se puede considerar aproximadamente igual al radio hidráulico (R).  
+            **Fundamento:** Este método es adecuado para ríos considerablemente anchos y poco profundos, donde la profundidad media (D) se puede considerar aproximadamente igual al radio hidráulico (R).  
             Esto ocurre cuando la relación ancho de la sección / perímetro mojado es próxima a 1, es decir, R ≈ D = A / W.
 
             **Ecuación base (Chezy):** Q = C √(R S).  
@@ -1512,20 +1762,21 @@ with tab4:
                     st.success("✅ **La relación R/D es cercana a 1 en todo el rango.** El método Stevens es aplicable.")
         else:
             st.caption("*(Genere la tabla de geometría en la pestaña correspondiente para evaluar la aplicabilidad del método Stevens)*")
+        
+        # --- AQUÍ ESTÁ LA CORRECCIÓN: Escuchamos la alarma de la Pestaña 1 ---
+        necesita_actualizar_s = (
+            st.session_state.get('stevens_data') is None 
+            or st.session_state.get('flag_actualizar_modelos', False)
+        )
 
-        # --- Inicialización de datos (igual) ---
-        if 'stevens_data' not in st.session_state:
-            st.session_state.stevens_data = None
-
-        if st.session_state.stevens_data is None:
+        if necesita_actualizar_s:
             # 1. RECIBIR AFOROS FILTRADOS (Ya vienen limpios de la Pestaña 1)
             if 'df_aforos_activos' in st.session_state:
                 df_a = st.session_state.df_aforos_activos.copy()
             else:
                 df_a = st.session_state.df_aforos.copy()
-            
+                
             p_data = st.session_state.perfil_data
-            df_g = st.session_state.df_geo
 
             col_area_af = buscar_columna(df_a.columns, ["AREA", "SEC"])
             col_d_af = buscar_columna(df_a.columns, ["PROF", "MEDIA"])
@@ -1533,78 +1784,93 @@ with tab4:
             if not col_area_af: st.sidebar.error("No se encontró la columna de Área de Sección en Aforos.")
             if not col_d_af: st.sidebar.error("No se encontró la columna de Profundidad Media en Aforos.")
             
+            # 2. FILTRAR PERFIL TOPOGRÁFICO ACTIVO
+            if 'perfil_puntos_activos' in st.session_state:
+                mascara_perfil = np.array(st.session_state.perfil_puntos_activos, dtype=bool)
+                abscisas_activas = np.array(p_data['abscisas'])[mascara_perfil]
+                cotas_activas = np.array(p_data['cotas'])[mascara_perfil]
+            else:
+                abscisas_activas = np.array(p_data['abscisas'])
+                cotas_activas = np.array(p_data['cotas'])
+
             datos_stevens = []
             for i, row in df_a.iterrows():
                 id_aforo = row.get("NO.", i+1)
                 H = row["H_m"]
                 Q = row["CAUDAL TOTAL (m3/s)"]
                 
+                # --- Cálculo de K del perfil (Stevens) ---
+                A_per = area_mojada(abscisas_activas, cotas_activas, p_data['cota_cero'], H)
+                Wh_per = ancho_superficial(abscisas_activas, cotas_activas, p_data['cota_cero'], H)
+                
+                K_per = 0
+                X_per = 0
+                if Wh_per > 0 and A_per > 0:
+                    D_per = A_per / Wh_per
+                    X_per = A_per * (D_per ** (2/3))
+                    K_per = Q / X_per if X_per > 0 else 0
+                
+                # --- Cálculo de K de aforos (Stevens) ---
                 A_af = row.get(col_area_af, np.nan)
                 D_af = row.get(col_d_af, np.nan)
                 
+                K_af = 0
                 X_af = np.nan
                 if pd.notna(A_af) and pd.notna(D_af) and A_af > 0 and D_af > 0:
                     X_af = A_af * (D_af ** (2/3))
-                
-                K_af = 0
-                if pd.notna(X_af) and X_af > 0:
-                    K_af = Q / X_af
+                    K_af = Q / X_af if X_af > 0 else 0
                 else:
                     st.sidebar.warning(f"Aforo {id_aforo}: faltan A_af o D_af, K_af = 0")
                 
-                idx_cercano = np.argmin(np.abs(df_g["H (m)"] - H))
-                H_cercano = df_g.iloc[idx_cercano]["H (m)"]
-                if abs(H_cercano - H) > 0.2:
-                    st.sidebar.warning(f"Aforo {id_aforo}: H={H:.2f} no cercano a geometría (H_geo={H_cercano:.2f})")
-                
-                A_per = df_g.iloc[idx_cercano]["Am (m2)"]
-                D_per = df_g.iloc[idx_cercano]["D (m)"]
-                
-                X_per = A_per * (D_per ** (2/3)) if A_per > 0 and D_per > 0 else 0
-                K_per = Q / X_per if X_per > 0 else 0
-                
                 if K_per > 0 or K_af > 0:
                     datos_stevens.append({
-                        "Incluir": True,
-                        "ID": id_aforo,
-                        "H": H,
-                        "Q": Q,
+                        "Incluir": True, 
+                        "ID": id_aforo, 
+                        "H": H, 
+                        "Q": Q, 
                         "A_af": A_af,
                         "D_af": D_af,
                         "X_af": X_af,
                         "K_af": K_af,
-                        "A_per": A_per,
-                        "D_per": D_per,
-                        "X_per": X_per,
                         "K_per": K_per,
                     })
             
             st.session_state.stevens_data = pd.DataFrame(datos_stevens)
+            
+            # --- APAGAMOS LA ALARMA Y RESETEAMOS LA TABLA VISUAL ---
+            st.session_state.flag_actualizar_modelos = False
+            if 'stevens_edited_df' in st.session_state:
+                del st.session_state['stevens_edited_df']
 
-        fuente_k_stevens = st.radio(
+        idx_fuente_s = 0
+        if "fuente_k_radio_s" in st.session_state:
+            if st.session_state.fuente_k_radio_s == "K del perfil":
+                idx_fuente_s = 1
+
+        fuente_k_s = st.radio(
             "Fuente de K:",
             options=["K de aforos", "K del perfil"],
-            index=0,
+            index=idx_fuente_s, 
             horizontal=True,
-            key="fuente_k_stevens"
+            key="fuente_k_radio_s"
         )
 
-        df_edit_stevens = st.session_state.stevens_data.copy()
-        if fuente_k_stevens == "K de aforos":
-            df_edit_stevens["K"] = df_edit_stevens["K_af"]
+        df_edit_s = st.session_state.stevens_data.copy()
+        
+        if fuente_k_s == "K de aforos":
+            df_edit_s["K"] = df_edit_s["K_af"]
         else:
-            df_edit_stevens["K"] = df_edit_stevens["K_per"]
+            df_edit_s["K"] = df_edit_s["K_per"]
 
-        # --- Persistencia: DataFrames editados y opciones de modelos ---
+        # --- PERSISTENCIA: Inicializar DataFrame editado y opciones de modelos ---
         if 'stevens_edited_df' not in st.session_state:
-            default_df = df_edit_stevens.copy()
-            default_df['Incluir'] = True
-            st.session_state.stevens_edited_df = default_df
+            default_df_s = df_edit_s.copy()
+            default_df_s['Incluir'] = True
+            st.session_state.stevens_edited_df = default_df_s
 
         if 'opts_modelos_stevens' not in st.session_state:
-            st.session_state.opts_modelos_stevens = {"lineal": True, "exp": True, "log": True, "pot": True}
+            st.session_state.opts_modelos_stevens = {"lineal": False, "exp": False, "log": False, "pot": False}
 
-        # --- Inicializar banda de error global (opcional, si se quiere usar) ---
         if 'banda_error_global' not in st.session_state:
             st.session_state.banda_error_global = 15.0
 
@@ -1614,15 +1880,13 @@ with tab4:
             with st.popover("⚙️ Controles"):
                 with st.form(key="stevens_form"):
                     st.caption("Filtro de Aforos")
-                    edited = st.data_editor(
-                        st.session_state.stevens_edited_df,
+                    edited_s = st.data_editor(
+                        st.session_state.stevens_edited_df[["Incluir", "ID", "H", "Q"]],
                         column_config={
-                            "Incluir": st.column_config.CheckboxColumn("Activo", default=True, width="small"),
-                            "ID": st.column_config.NumberColumn("ID", disabled=True, width="small"),
-                            "H": st.column_config.NumberColumn("H", disabled=True, format="%.2f", width="small"),
-                            "Q": st.column_config.NumberColumn("Q", disabled=True, format="%.2f", width="small"),
-                            "A_af": None, "D_af": None, "X_af": None, "K_af": None,
-                            "A_per": None, "D_per": None, "X_per": None, "K_per": None, "K": None
+                            "Incluir": st.column_config.CheckboxColumn("Activo", default=True),
+                            "ID": st.column_config.NumberColumn("ID", disabled=True),
+                            "H": st.column_config.NumberColumn("H (m)", disabled=True, format="%.2f"),
+                            "Q": st.column_config.NumberColumn("Q (m³/s)", disabled=True, format="%.2f"),
                         },
                         disabled=False,
                         hide_index=True,
@@ -1631,17 +1895,20 @@ with tab4:
                     )
 
                     st.caption("Modelos de ajuste")
-                    lineal = st.checkbox("Lineal", value=st.session_state.opts_modelos_stevens["lineal"])
-                    exp = st.checkbox("Exponencial", value=st.session_state.opts_modelos_stevens["exp"])
-                    log = st.checkbox("Logarítmica", value=st.session_state.opts_modelos_stevens["log"])
-                    pot = st.checkbox("Potencial", value=st.session_state.opts_modelos_stevens["pot"])
+                    lineal_s = st.checkbox("Lineal", value=st.session_state.opts_modelos_stevens["lineal"])
+                    exp_s = st.checkbox("Exponencial", value=st.session_state.opts_modelos_stevens["exp"])
+                    log_s = st.checkbox("Logarítmica", value=st.session_state.opts_modelos_stevens["log"])
+                    pot_s = st.checkbox("Potencial", value=st.session_state.opts_modelos_stevens["pot"])
 
-                    # --- Input para la banda (si se desea) ---
                     st.caption("Configuración General")
-                    banda_input = st.number_input("Banda de Validación (%)", 
-                                                  min_value=1.0, max_value=50.0, 
-                                                  value=float(st.session_state.banda_error_global), 
-                                                  step=1.0)
+                    opciones_banda = ["Estable (10%)", "Inestable (15%)"]
+                    indice_actual = 0 if st.session_state.banda_error_global == 10 else 1
+                    tipo_seccion = st.radio(
+                        "Tipo de sección:",
+                        options=opciones_banda,
+                        index=indice_actual,
+                        horizontal=True
+                    )
 
                     col1, col2 = st.columns(2)
                     with col1:
@@ -1650,37 +1917,45 @@ with tab4:
                         cancelled = st.form_submit_button("Cancelar")
 
                     if submitted:
-                        st.session_state.stevens_edited_df = edited
-                        st.session_state.opts_modelos_stevens["lineal"] = lineal
-                        st.session_state.opts_modelos_stevens["exp"] = exp
-                        st.session_state.opts_modelos_stevens["log"] = log
-                        st.session_state.opts_modelos_stevens["pot"] = pot
-                        st.session_state.banda_error_global = banda_input
+                        st.session_state.stevens_edited_df = edited_s
+                        st.session_state.opts_modelos_stevens["lineal"] = lineal_s
+                        st.session_state.opts_modelos_stevens["exp"] = exp_s
+                        st.session_state.opts_modelos_stevens["log"] = log_s
+                        st.session_state.opts_modelos_stevens["pot"] = pot_s
+                        if tipo_seccion == "Estable (10%)":
+                            st.session_state.banda_error_global = 10.0
+                        else:
+                            st.session_state.banda_error_global = 15.0
                         st.rerun()
                     elif cancelled:
                         st.rerun()
 
-        # --- Gráficas ---
+        # --- Gráficas (siempre ancho completo) ---
         col_k_s, col_q_s = st.columns(2)
         with col_k_s:
-            st.subheader("K vs Nivel (H) - Stevens")
+            st.subheader("K vs Nivel (H)")
             placeholder_k_s = st.empty()
         with col_q_s:
-            st.subheader("Curva de Gasto - Stevens")
+            st.subheader("Curva de Gasto")
             placeholder_q_s = st.empty()
 
-        # --- Leer estado ---
-        edited_stevens = st.session_state.stevens_edited_df
+        # --- Leer estado actual para las gráficas ---
         mostrar_lineal_s = st.session_state.opts_modelos_stevens["lineal"]
         mostrar_exp_s = st.session_state.opts_modelos_stevens["exp"]
         mostrar_log_s = st.session_state.opts_modelos_stevens["log"]
         mostrar_pot_s = st.session_state.opts_modelos_stevens["pot"]
 
-        # --- Separar activos e inactivos ---
-        activos_s = edited_stevens[edited_stevens["Incluir"] == True].copy()
-        inactivos_s = edited_stevens[edited_stevens["Incluir"] == False].copy()
+        # Obtener DataFrames
+        df_original_s = st.session_state.stevens_data.copy()
+        df_edit_s = st.session_state.stevens_edited_df.copy()
 
-        if fuente_k_stevens == "K de aforos":
+        ids_activos_s = df_edit_s[df_edit_s["Incluir"] == True]["ID"].values
+        ids_inactivos_s = df_edit_s[df_edit_s["Incluir"] == False]["ID"].values
+
+        activos_s = df_original_s[df_original_s["ID"].isin(ids_activos_s)].copy()
+        inactivos_s = df_original_s[df_original_s["ID"].isin(ids_inactivos_s)].copy()
+
+        if fuente_k_s == "K de aforos":
             activos_s["K"] = activos_s["K_af"]
             inactivos_s["K"] = inactivos_s["K_af"]
         else:
@@ -1700,7 +1975,20 @@ with tab4:
             X_val_s = np.array(H_act_s)
             Y_val_s = np.array(K_act_s)
             
-            # --- Ajustes de modelos (igual) ---
+            # --- Interpoladores de geometría para simulación de Q ---
+            df_g = st.session_state.df_geo.copy()
+            H_min_geo = df_g["H (m)"].min()
+            H_max_geo = df_g["H (m)"].max()
+            
+            from scipy.interpolate import interp1d
+            interp_A_s = interp1d(df_g["H (m)"], df_g["Am (m2)"], kind='linear', fill_value='extrapolate')
+            interp_D_s = interp1d(df_g["H (m)"], df_g["D (m)"], kind='linear', fill_value='extrapolate')
+            
+            A_act_s = interp_A_s(X_val_s)
+            D_act_s = interp_D_s(X_val_s)
+            X_factor_act = A_act_s * (D_act_s ** (2/3))
+            
+            # Ajustes de modelos
             ajustes_s = {}
             mask_log_s = (X_val_s > 0) & (Y_val_s > 0)
             X_log_s, Y_log_s = X_val_s[mask_log_s], Y_val_s[mask_log_s]
@@ -1709,133 +1997,166 @@ with tab4:
             p_lin_s = np.polyfit(X_val_s, Y_val_s, 1)
             Y_lin_s = p_lin_s[0]*X_val_s + p_lin_s[1]
             r_lin_s = np.corrcoef(Y_val_s, Y_lin_s)[0, 1]
-            r2_lin_s = r_lin_s**2
             ajustes_s["Lineal"] = {
-                "r": r_lin_s,
-                "R2": r2_lin_s,
+                "r": r_lin_s, "R2": r_lin_s**2,
                 "func": lambda x: p_lin_s[0]*x + p_lin_s[1],
                 "eq": f"K = {p_lin_s[0]:.3f}H + {p_lin_s[1]:.3f}"
             }
 
             if len(X_log_s) > 1:
-                # Exponencial
                 p_exp_s = np.polyfit(X_val_s, np.log(Y_val_s), 1)
                 Y_exp_s = np.exp(p_exp_s[1]) * np.exp(p_exp_s[0]*X_val_s)
                 r_exp_s = np.corrcoef(Y_val_s, Y_exp_s)[0, 1]
-                r2_exp_s = r_exp_s**2
                 ajustes_s["Exponencial"] = {
-                    "r": r_exp_s,
-                    "R2": r2_exp_s,
+                    "r": r_exp_s, "R2": r_exp_s**2,
                     "func": lambda x: np.exp(p_exp_s[1]) * np.exp(p_exp_s[0]*x),
                     "eq": f"K = {np.exp(p_exp_s[1]):.3f} e^({p_exp_s[0]:.3f}H)"
                 }
 
-                # Logarítmica
                 p_log_s = np.polyfit(np.log(X_log_s), Y_log_s, 1)
                 Y_log_fit_s = p_log_s[0]*np.log(X_log_s) + p_log_s[1]
                 r_log_s = np.corrcoef(Y_log_s, Y_log_fit_s)[0, 1]
-                r2_log_s = r_log_s**2
                 ajustes_s["Logarítmica"] = {
-                    "r": r_log_s,
-                    "R2": r2_log_s,
+                    "r": r_log_s, "R2": r_log_s**2,
                     "func": lambda x: np.where(x > 0, p_log_s[0]*np.log(x) + p_log_s[1], np.nan),
                     "eq": f"K = {p_log_s[0]:.3f} ln(H) + {p_log_s[1]:.3f}"
                 }
 
-                # Potencial
                 p_pot_s = np.polyfit(np.log(X_log_s), np.log(Y_log_s), 1)
                 Y_pot_s = np.exp(p_pot_s[1]) * (X_log_s ** p_pot_s[0])
                 r_pot_s = np.corrcoef(Y_log_s, Y_pot_s)[0, 1]
-                r2_pot_s = r_pot_s**2
                 ajustes_s["Potencial"] = {
-                    "r": r_pot_s,
-                    "R2": r2_pot_s,
+                    "r": r_pot_s, "R2": r_pot_s**2,
                     "func": lambda x: np.where(x > 0, np.exp(p_pot_s[1]) * (x ** p_pot_s[0]), np.nan),
                     "eq": f"K = {np.exp(p_pot_s[1]):.3f} H^({p_pot_s[0]:.3f})"
                 }
 
-            # --- Interpoladores para calcular X = A * D^(2/3) exacto ---
-            df_g = st.session_state.df_geo.copy()
-            from scipy.interpolate import interp1d
-            interp_A_s = interp1d(df_g["H (m)"], df_g["Am (m2)"], kind='linear', fill_value='extrapolate')
-            interp_D_s = interp1d(df_g["H (m)"], df_g["D (m)"], kind='linear', fill_value='extrapolate')
-            
-            # X = A * D^(2/3)
-            A_act_s = interp_A_s(X_val_s)
-            D_act_s = interp_D_s(X_val_s)
-            X_factor_act = A_act_s * (D_act_s ** (2/3))
-
-            # Calcular MAPE y Sigma para cada modelo
+            # --- Calcular MAPE y σq para cada modelo ---
             for k, v in ajustes_s.items():
                 K_est_s = v["func"](X_val_s)
                 Q_est_s = K_est_s * X_factor_act
-                
                 mask_err_s = (Q_act_s != 0) & np.isfinite(Q_est_s)
                 if np.any(mask_err_s):
-                    error_mape_s = np.mean(np.abs((Q_est_s[mask_err_s] - Q_act_s[mask_err_s]) / Q_act_s[mask_err_s])) * 100
-                    error_sigma_s = calcular_error_procedimiento(Q_act_s[mask_err_s], Q_est_s[mask_err_s], K=2)
+                    v["MAPE"] = np.mean(np.abs((Q_est_s[mask_err_s] - Q_act_s[mask_err_s]) / Q_act_s[mask_err_s])) * 100
+                    v["Sigma_q"] = calcular_error_procedimiento(Q_act_s[mask_err_s], Q_est_s[mask_err_s], K=2)
                 else:
-                    error_mape_s = np.nan
-                    error_sigma_s = np.nan
-                v["MAPE"] = error_mape_s
-                v["Sigma_q"] = error_sigma_s
+                    v["MAPE"] = np.nan
+                    v["Sigma_q"] = np.nan
 
             # --- Selector de método y tabla de modelos ---
-            col_metodo_s, col_modelos_s = st.columns([1, 2])
-            with col_metodo_s:
-                metodo_seleccionado_s = st.selectbox(
-                    "Método Matemático:",
-                    ["Automático (Menor MAPE)", "Potencial", "Logarítmica", "Exponencial", "Lineal"],
-                    key="metodo_select_stevens"
-                )
-            with col_modelos_s:
-                st.subheader("Comparación de modelos")
-                # Crear DataFrame con todos los modelos y sus métricas
-                df_modelos_s = pd.DataFrame([
-                    {
-                        "Modelo": k, 
-                        "r": f"{v['r']:.4f}", 
-                        "R²": f"{v['R2']:.4f}", 
-                        "MAPE (%)": f"{v['MAPE']:.2f}" if pd.notna(v['MAPE']) else "N/A",
-                        "σq (%)": f"{v['Sigma_q']:.2f}" if pd.notna(v['Sigma_q']) else "N/A",
-                        "Ecuación": v['eq']
-                    }
-                    for k, v in ajustes_s.items()
-                ])
-                # Convertir MAPE a número para ordenar (los N/A se colocan al final)
-                df_modelos_s['MAPE_num'] = pd.to_numeric(df_modelos_s['MAPE (%)'], errors='coerce')
-                df_modelos_s = df_modelos_s.sort_values('MAPE_num', na_position='last').drop(columns=['MAPE_num'])
-                
-                st.dataframe(df_modelos_s, use_container_width=True, hide_index=True)
+            opciones_metodo_s = ["Automático (Menor MAPE)", "Potencial", "Logarítmica", "Exponencial", "Lineal", "Compuesta (Por tramos)"]
+            idx_metodo_s = 0
+            if "metodo_select_stevens" in st.session_state:
+                if st.session_state.metodo_select_stevens in opciones_metodo_s:
+                    idx_metodo_s = opciones_metodo_s.index(st.session_state.metodo_select_stevens)
 
-            # Seleccionar modelo
+            st.markdown("---")
+            metodo_seleccionado_s = st.selectbox(
+                "Método Matemático Principal:",
+                opciones_metodo_s,
+                index=idx_metodo_s,
+                key="metodo_select_stevens"
+            )
+
+            # 2. Lógica UI si selecciona la Compuesta
+            if metodo_seleccionado_s == "Compuesta (Por tramos)":
+                st.markdown("#### 🔀 Configuración de Curva Compuesta")
+                col_c1, col_c2, col_c3 = st.columns(3)
+
+                h_min_safe = float(H_act_s.min()) if len(H_act_s) > 0 else 0.0
+                h_max_safe = float(H_max_geo)
+                h_med_safe = float(np.median(H_act_s)) if len(H_act_s) > 0 else 1.0
+
+                with col_c1:
+                    h_quiebre_s = st.number_input(
+                        "Nivel de Quiebre (H en m) - Stevens",
+                        min_value=h_min_safe,
+                        max_value=h_max_safe,
+                        value=st.session_state.get('stevens_h_quiebre', h_med_safe),
+                        step=0.1,
+                        key='stevens_h_quiebre'
+                    )
+                with col_c2:
+                    modelo_inf_s = st.selectbox(
+                        "Modelo Inferior (H < Quiebre)",
+                        ["Potencial", "Logarítmica", "Exponencial", "Lineal"],
+                        index=0,
+                        key='stevens_modelo_inf'
+                    )
+                with col_c3:
+                    modelo_sup_s = st.selectbox(
+                        "Modelo Superior (H ≥ Quiebre)",
+                        ["Exponencial", "Lineal", "Potencial", "Logarítmica"],
+                        index=1,
+                        key='stevens_modelo_sup'
+                    )
+
+                def func_compuesta_s(x):
+                    h_q = st.session_state.stevens_h_quiebre
+                    m_inf = st.session_state.stevens_modelo_inf
+                    m_sup = st.session_state.stevens_modelo_sup
+                    f_inf = ajustes_s[m_inf]["func"] if m_inf in ajustes_s else ajustes_s.get("Lineal")["func"]
+                    f_sup = ajustes_s[m_sup]["func"] if m_sup in ajustes_s else ajustes_s.get("Lineal")["func"]
+                    return np.where(x < h_q, f_inf(x), f_sup(x))
+
+                # Calcular errores de la curva compuesta
+                K_est_comp_s = func_compuesta_s(X_val_s)
+                Q_est_comp_s = K_est_comp_s * X_factor_act
+                mask_err_comp_s = (Q_act_s != 0) & np.isfinite(Q_est_comp_s)
+
+                if np.any(mask_err_comp_s):
+                    mape_comp_s = np.mean(np.abs((Q_est_comp_s[mask_err_comp_s] - Q_act_s[mask_err_comp_s]) / Q_act_s[mask_err_comp_s])) * 100
+                    sigma_comp_s = calcular_error_procedimiento(Q_act_s[mask_err_comp_s], Q_est_comp_s[mask_err_comp_s], K=2)
+                else:
+                    mape_comp_s, sigma_comp_s = np.nan, np.nan
+
+                ajustes_s["Compuesta (Por tramos)"] = {
+                    "func": func_compuesta_s,
+                    "eq": f"{modelo_inf_s} (<{h_quiebre_s:.2f}m) y {modelo_sup_s} (≥{h_quiebre_s:.2f}m)",
+                    "MAPE": mape_comp_s,
+                    "Sigma_q": sigma_comp_s,
+                    "r": np.nan, "R2": np.nan
+                }
+
+            # 3. Mostrar la tabla comparativa de los modelos
+            st.subheader("Comparación de modelos")
+            df_modelos_s = pd.DataFrame([
+                {
+                    "Modelo": k, 
+                    "r": f"{v['r']:.4f}" if pd.notna(v['r']) else "-", 
+                    "R²": f"{v['R2']:.4f}" if pd.notna(v['R2']) else "-", 
+                    "Error Absoluto (%)": f"{v['MAPE']:.2f}" if pd.notna(v['MAPE']) else "N/A",
+                    "σq (%)": f"{v['Sigma_q']:.2f}" if pd.notna(v['Sigma_q']) else "N/A",
+                    "Ecuación": v['eq']
+                }
+                for k, v in ajustes_s.items()
+            ])
+            df_modelos_s['MAPE_num'] = pd.to_numeric(df_modelos_s['Error Absoluto (%)'], errors='coerce')
+            df_modelos_s = df_modelos_s.sort_values('MAPE_num', na_position='last').drop(columns=['MAPE_num'])
+            st.dataframe(df_modelos_s, use_container_width=True, hide_index=True)
+
+            # 4. Seleccionar modelo definitivo
             if metodo_seleccionado_s == "Automático (Menor MAPE)":
-                # Elegir el modelo con el MAPE más pequeño (ignorando NaN)
                 mejor_modelo_s = min(
-                    (k for k in ajustes_s if pd.notna(ajustes_s[k]["MAPE"])),
+                    (k for k in ajustes_s if pd.notna(ajustes_s[k]["MAPE"]) and k != "Compuesta (Por tramos)"),
                     key=lambda k: ajustes_s[k]["MAPE"],
-                    default=list(ajustes_s.keys())[0]  # fallback por si todos son NaN
+                    default=list(ajustes_s.keys())[0]
                 )
             else:
                 mejor_modelo_s = metodo_seleccionado_s
             
             funcion_optima_s = ajustes_s[mejor_modelo_s]["func"]
-            st.info(f"Modelo seleccionado: **{mejor_modelo_s}** con MAPE = {ajustes_s[mejor_modelo_s]['MAPE']:.2f}% (R² = {ajustes_s[mejor_modelo_s]['R2']:.4f})")
+            
+            r2_display_s = f" (R² = {ajustes_s[mejor_modelo_s]['R2']:.4f})" if pd.notna(ajustes_s[mejor_modelo_s]['R2']) else ""
+            st.info(f"Modelo seleccionado (Línea principal): **{mejor_modelo_s}** con Error Absoluto = {ajustes_s[mejor_modelo_s]['MAPE']:.2f}%{r2_display_s}")
 
             # --- Aplicar a geometría (extrapolación) ---
-            df_g = st.session_state.df_geo.copy()
-            H_min_geo = df_g["H (m)"].min()
-            H_max_geo = df_g["H (m)"].max()
-            paso_fino = 0.2  # Se puede ajustar (originalmente 0.01, pero 0.2 es más rápido)
+            paso_fino = 0.2
             H_fino_s = np.arange(H_min_geo, H_max_geo + paso_fino, paso_fino)
             
             K_fino_s = funcion_optima_s(H_fino_s)
-            
-            interp_A = interp1d(df_g["H (m)"], df_g["Am (m2)"], kind='linear', fill_value='extrapolate')
-            interp_D = interp1d(df_g["H (m)"], df_g["D (m)"], kind='linear', fill_value='extrapolate')
-            
-            A_fino_s = interp_A(H_fino_s)
-            D_fino_s = interp_D(H_fino_s)
+            A_fino_s = interp_A_s(H_fino_s)
+            D_fino_s = interp_D_s(H_fino_s)
             
             X_fino_s = A_fino_s * (D_fino_s ** (2/3))
             Q_fino_s = K_fino_s * X_fino_s
@@ -1843,7 +2164,7 @@ with tab4:
             # --- Filtrar valores no finitos y negativos ---
             mask_finite_s = np.isfinite(Q_fino_s)
             if not np.all(mask_finite_s):
-                st.warning(f"Se encontraron {np.sum(~mask_finite_s)} valores no finitos en la curva Stevens. Se eliminarán.")
+                st.warning(f"Se encontraron {np.sum(~mask_finite_s)} valores no finitos en la curva. Se eliminarán.")
                 H_fino_s = H_fino_s[mask_finite_s]
                 Q_fino_s = Q_fino_s[mask_finite_s]
 
@@ -1867,20 +2188,16 @@ with tab4:
             color_curva = '#ffaa00'
             color_banda = 'rgba(200, 200, 200, 0.15)'
 
-            # --- Preparar funciones adicionales para K vs H ---
+            # --- Preparar funciones adicionales para la gráfica K vs H ---
             funcs_adic_s = {}
-            if 'Lineal' in ajustes_s:
-                funcs_adic_s['lineal'] = (ajustes_s['Lineal']['func'], mostrar_lineal_s)
-            if 'Exponencial' in ajustes_s:
-                funcs_adic_s['exp'] = (ajustes_s['Exponencial']['func'], mostrar_exp_s)
-            if 'Logarítmica' in ajustes_s:
-                funcs_adic_s['log'] = (ajustes_s['Logarítmica']['func'], mostrar_log_s)
-            if 'Potencial' in ajustes_s:
-                funcs_adic_s['pot'] = (ajustes_s['Potencial']['func'], mostrar_pot_s)
+            if 'Lineal' in ajustes_s: funcs_adic_s['lineal'] = (ajustes_s['Lineal']['func'], mostrar_lineal_s)
+            if 'Exponencial' in ajustes_s: funcs_adic_s['exp'] = (ajustes_s['Exponencial']['func'], mostrar_exp_s)
+            if 'Logarítmica' in ajustes_s: funcs_adic_s['log'] = (ajustes_s['Logarítmica']['func'], mostrar_log_s)
+            if 'Potencial' in ajustes_s: funcs_adic_s['pot'] = (ajustes_s['Potencial']['func'], mostrar_pot_s)
 
-            # --- Crear figura K vs H ---
             H_smooth_s = np.linspace(min(X_val_s)*0.5, max(X_val_s)*1.5, 200)
             K_sel_s = funcion_optima_s(H_smooth_s)
+
             inactivos_k_s = inactivos_s[['H', 'K']].rename(columns={'K': 'Y'}) if not inactivos_s.empty else None
 
             fig_k_s = crear_figura_k(
@@ -1899,9 +2216,9 @@ with tab4:
             )
             placeholder_k_s.plotly_chart(fig_k_s, use_container_width=True)
 
-            # --- Crear figura Curva de Gasto (usando banda global) ---
+            # --- Gráfica Curva de Gasto con banda global Y TODOS LOS MODELOS ACTIVOS ---
             fig_q_s = crear_figura_curva(
-                titulo=f"Curva de Gasto - usando {fuente_k_stevens}",
+                titulo=f"Curva de Gasto - usando {fuente_k_s}",
                 H_fino=H_fino_s,
                 Q_suave=Q_suave_s,
                 Q_act=Q_act_s,
@@ -1913,29 +2230,48 @@ with tab4:
                 color_banda=color_banda,
                 banda_pct=st.session_state.banda_error_global
             )
+            
+            # AGREGAR MODELOS ADICIONALES A LA CURVA DE GASTO
+            colores_extras = {'Lineal': 'cyan', 'Exponencial': 'magenta', 'Logarítmica': 'yellow', 'Potencial': 'lime'}
+            mapa_nombres_s = {'Lineal': mostrar_lineal_s, 'Exponencial': mostrar_exp_s, 'Logarítmica': mostrar_log_s, 'Potencial': mostrar_pot_s}
+            
+            for nombre_mod, dict_mod in ajustes_s.items():
+                if mapa_nombres_s.get(nombre_mod, False) and nombre_mod != mejor_modelo_s:
+                    K_extra_s = dict_mod["func"](H_fino_s)
+                    Q_extra_s = K_extra_s * interp_A_s(H_fino_s) * (interp_D_s(H_fino_s) ** (2/3))
+                    Q_extra_s = np.maximum(Q_extra_s, 0)
+                    
+                    fig_q_s.add_trace(go.Scatter(
+                        x=Q_extra_s, y=H_fino_s, mode='lines', name=f'Q ({nombre_mod})',
+                        line=dict(color=colores_extras[nombre_mod], width=2, dash='dot')
+                    ))
+
             placeholder_q_s.plotly_chart(fig_q_s, use_container_width=True)
 
-            # --- Calcular errores para la tabla individual usando la función pura ---
-            errores_s = []
+            # --- NUEVA TABLA DE ERRORES CON TODOS LOS MODELOS ---
+            errores_data_s = []
             for _, row in activos_s.iterrows():
                 h_val_s = row["H"]
                 q_obs_s = row["Q"]
-                
-                k_est_s = funcion_optima_s(h_val_s)
                 a_val_s = float(interp_A_s(h_val_s))
                 d_val_s = float(interp_D_s(h_val_s))
                 x_val_factor = a_val_s * (d_val_s ** (2/3))
-                q_est_puro_s = k_est_s * x_val_factor
                 
-                err_pct_s = abs(q_est_puro_s - q_obs_s) / q_obs_s * 100 if q_obs_s != 0 else np.nan
-                errores_s.append({
+                fila_error_s = {
                     "H (m)": h_val_s, 
-                    "Q Estimado (m³/s)": q_est_puro_s,
-                    "Q Aforado (m³/s)": q_obs_s, 
-                    "Error %": err_pct_s
-                })
+                    "Q Aforado (m³/s)": q_obs_s
+                }
+                
+                # Calcular el error para cada modelo matemático
+                for nombre_mod, dict_mod in ajustes_s.items():
+                    k_est_s = dict_mod["func"](h_val_s)
+                    q_est_s = k_est_s * x_val_factor
+                    err_pct_s = abs(q_est_s - q_obs_s) / q_obs_s * 100 if q_obs_s != 0 else np.nan
+                    fila_error_s[f"Error {nombre_mod} (%)"] = err_pct_s
+                    
+                errores_data_s.append(fila_error_s)
 
-            # --- Obtener errores del mejor modelo ---
+            # --- Obtener errores globales del mejor modelo ---
             prom_mape_s = ajustes_s[mejor_modelo_s]["MAPE"]
             prom_sigma_s = ajustes_s[mejor_modelo_s]["Sigma_q"]
 
@@ -1945,30 +2281,64 @@ with tab4:
                 if st.button("💾 Guardar curva", key="guardar_stevens"):
                     if len(H_fino_s) > 0 and len(Q_suave_s) > 0 and np.isfinite(Q_suave_s).any():
                         st.session_state.stevens_curve = pd.DataFrame({"H": H_fino_s, "Q": Q_suave_s})
-                        st.session_state.stevens_error = prom_mape_s  # retrocompatibilidad
+                        st.session_state.stevens_error = prom_mape_s
                         st.session_state.stevens_error_sigma = prom_sigma_s
-                        st.success("Curva guardada")
+                        st.success("Curva guardada en la sesión.")
                     else:
                         st.error("No hay curva válida")
+                
+                # --- LA MAGIA DE LA RESTAURACIÓN ---
+                if "stevens_curve" in st.session_state and st.session_state.stevens_curve is not None:
+                    st.success("✅ Curva definitiva cargada en memoria")
+                    with st.expander("Ver tabla guardada"):
+                        st.dataframe(st.session_state.stevens_curve, height=150, use_container_width=True)
             with col_mape_s:
-                st.metric("MAPE Promedio", f"{prom_mape_s:.1f}%" if pd.notna(prom_mape_s) else "N/A")
+                st.metric("Error Absoluto Promedio", f"{prom_mape_s:.1f}%" if pd.notna(prom_mape_s) else "N/A")
             with col_sigma_s:
                 st.metric("Error Procedimiento (σq)", f"{prom_sigma_s:.1f}%" if pd.notna(prom_sigma_s) else "N/A")
 
-            # --- Tabla de errores ---
+            # --- Tabla de errores (SEMÁFORO) ---
             st.markdown("---")
-            st.subheader("Errores en aforos activos")
-            df_err_s = pd.DataFrame(errores_s)
-            st.dataframe(df_err_s.style.format({"H (m)": "{:.2f}", "Q Estimado (m³/s)": "{:.2f}",
-                                                 "Q Aforado (m³/s)": "{:.2f}", "Error %": "{:.1f}"}),
-                         use_container_width=True, hide_index=True)
+            st.subheader("Errores en aforos activos (Todos los modelos)")
+            
+            df_errores_s = pd.DataFrame(errores_data_s)
+            
+            # --- ORDENAR LA TABLA POR H DE MENOR A MAYOR ---
+            df_errores_s = df_errores_s.sort_values(by="H (m)", ascending=True).reset_index(drop=True)
+            
+            # Identificar qué columnas contienen la palabra "Error"
+            cols_error_s = [col for col in df_errores_s.columns if "Error" in col]
+            
+            # Función para aplicar la regla de color semáforo
+            def color_semaforo_s(val):
+                if pd.isna(val):
+                    return ''
+                try:
+                    v = float(val)
+                    if v <= 10:
+                        return 'background-color: rgba(39, 174, 96, 0.4); color: white;' # Verde
+                    elif v <= 50:
+                        return 'background-color: rgba(243, 156, 18, 0.4); color: white;' # Amarillo
+                    else:
+                        return 'background-color: rgba(192, 57, 43, 0.4); color: white;' # Rojo
+                except:
+                    return ''
+
+            # Diccionario para redondear correctamente
+            format_dict_s = {"H (m)": "{:.2f}", "Q Aforado (m³/s)": "{:.2f}"}
+            for c in cols_error_s:
+                format_dict_s[c] = "{:.1f}"
+                
+            # Aplicar formato numérico y aplicar colores solo a las columnas de error
+            styled_df_s = df_errores_s.style.format(format_dict_s).map(color_semaforo_s, subset=cols_error_s)
+            
+            st.dataframe(styled_df_s, use_container_width=True, hide_index=True)
 
 # ================== PESTAÑA 5: MÉTODO ÁREA-VELOCIDAD ==================
 with tab5:
     if st.session_state.df_aforos is None or st.session_state.df_geo is None:
         st.warning("Procesa los Aforos y genera la Tabla de Geometría primero.")
     else:
-
         # --- ENCABEZADO INFORMATIVO DEL MÉTODO ---
         with st.expander("📘 **Fundamento y consideraciones del método Área-Velocidad**", expanded=False):
             st.markdown("""
@@ -1989,12 +2359,17 @@ with tab5:
             > *Limitación:* La calidad de la extrapolación depende fuertemente de la precisión de los aforos y de que la sección transversal sea estable (sin cambios morfológicos significativos). Se recomienda verificar que los aforos utilizados representen adecuadamente el rango de niveles a extrapolar.
             """)
         
-        # --- Inicialización de datos (código completo) ---
-        if 'av_data' not in st.session_state:
-            st.session_state.av_data = None
-
-        if st.session_state.av_data is None:
-            # 1. RECIBIR AFOROS FILTRADOS (Ya vienen limpios de la Pestaña 1)
+        # --- INDICADOR DE APLICABILIDAD (opcional: basado en la relación V/D o algo similar) ---
+        # (Podría agregarse un indicador similar al de Stevens, pero no es necesario)
+        
+        # --- ACTUALIZACIÓN AUTOMÁTICA (como en Stevens) ---
+        necesita_actualizar_av = (
+            st.session_state.get('av_data') is None 
+            or st.session_state.get('flag_actualizar_modelos', False)
+        )
+        
+        if necesita_actualizar_av:
+            # 1. OBTENER AFOROS ACTIVOS (filtrados en pestaña 1)
             if 'df_aforos_activos' in st.session_state:
                 df_a = st.session_state.df_aforos_activos.copy()
             else:
@@ -2002,11 +2377,23 @@ with tab5:
             
             p_data = st.session_state.perfil_data
             df_g = st.session_state.df_geo
-
-            col_v_af = buscar_columna(df_a.columns, ["VELOC", "MEDIA"])
             
+            col_v_af = buscar_columna(df_a.columns, ["VELOC", "MEDIA"])
             if not col_v_af:
                 st.sidebar.error("No se encontró la columna de Velocidad Media en Aforos.")
+            
+            # 2. FILTRAR PERFIL TOPOGRÁFICO ACTIVO
+            if 'perfil_puntos_activos' in st.session_state:
+                mascara_perfil = np.array(st.session_state.perfil_puntos_activos, dtype=bool)
+                abscisas_activas = np.array(p_data['abscisas'])[mascara_perfil]
+                cotas_activas = np.array(p_data['cotas'])[mascara_perfil]
+            else:
+                abscisas_activas = np.array(p_data['abscisas'])
+                cotas_activas = np.array(p_data['cotas'])
+            
+            # 3. INTERPOLADORES DE GEOMETRÍA (para obtener área exacta)
+            from scipy.interpolate import interp1d
+            interp_A = interp1d(df_g["H (m)"], df_g["Am (m2)"], kind='linear', fill_value='extrapolate')
             
             datos_av = []
             for i, row in df_a.iterrows():
@@ -2014,13 +2401,15 @@ with tab5:
                 H = row["H_m"]
                 Q = row["CAUDAL TOTAL (m3/s)"]
                 
+                # Velocidad de aforo
                 v_af = row.get(col_v_af, np.nan)
                 
+                # Velocidad estimada por perfil (Q / A_per)
+                # Buscamos el nivel más cercano en geometría
                 idx_cercano = np.argmin(np.abs(df_g["H (m)"] - H))
                 H_cercano = df_g.iloc[idx_cercano]["H (m)"]
                 if abs(H_cercano - H) > 0.2:
                     st.sidebar.warning(f"Aforo {id_aforo}: H={H:.2f} no cercano a geometría (H_geo={H_cercano:.2f})")
-                
                 A_per = df_g.iloc[idx_cercano]["Am (m2)"]
                 v_per = Q / A_per if A_per > 0 else 0
                 
@@ -2035,87 +2424,102 @@ with tab5:
                     })
             
             st.session_state.av_data = pd.DataFrame(datos_av)
-
+            
+            # --- APAGAMOS LA ALARMA Y RESETEAMOS LA TABLA VISUAL ---
+            st.session_state.flag_actualizar_modelos = False
+            if 'av_edited_df' in st.session_state:
+                del st.session_state['av_edited_df']
+        
+        # --- RADIO PARA ELEGIR FUENTE DE VELOCIDAD ---
+        idx_fuente_av = 0
+        if "fuente_v_radio" in st.session_state:
+            if st.session_state.fuente_v_radio == "Velocidad estimada del perfil":
+                idx_fuente_av = 1
+        
         fuente_v = st.radio(
             "Fuente de Velocidad:",
             options=["Velocidad de aforos", "Velocidad estimada del perfil"],
-            index=0,
+            index=idx_fuente_av,
             horizontal=True,
             key="fuente_v_radio"
         )
-
+        
+        # --- DATAFRAME BASE CON V SEGÚN FUENTE ---
         df_edit_av = st.session_state.av_data.copy()
         if fuente_v == "Velocidad de aforos":
             df_edit_av["V"] = df_edit_av["V_af"]
         else:
             df_edit_av["V"] = df_edit_av["V_per"]
-
-        # --- Persistencia ---
+        
+        # --- PERSISTENCIA: DataFrame editado y opciones de modelos ---
         if 'av_edited_df' not in st.session_state:
-            default_df = df_edit_av.copy()
-            default_df['Incluir'] = True
-            st.session_state.av_edited_df = default_df
-
+            default_df_av = df_edit_av.copy()
+            default_df_av['Incluir'] = True
+            st.session_state.av_edited_df = default_df_av
+        
         if 'opts_modelos_av' not in st.session_state:
-            st.session_state.opts_modelos_av = {"lineal": True, "exp": True, "log": True, "pot": True}
-
-        # --- Inicializar banda de error global ---
+            st.session_state.opts_modelos_av = {"lineal": False, "exp": False, "log": False, "pot": False}
+        
         if 'banda_error_global' not in st.session_state:
-            st.session_state.banda_error_global = 15.0 # Por defecto 15%
-
-        # --- Botón con popover (con formulario) ---
-        col_btn, _ = st.columns([0.1, 0.9])
-        with col_btn:
+            st.session_state.banda_error_global = 15.0  # Por defecto 15%
+        
+        # --- POPOVER DE CONTROLES ---
+        col_btn_av, _ = st.columns([0.1, 0.9])
+        with col_btn_av:
             with st.popover("⚙️ Controles"):
                 with st.form(key="av_form"):
                     st.caption("Filtro de Aforos")
-                    edited = st.data_editor(
-                        st.session_state.av_edited_df,
+                    edited_av = st.data_editor(
+                        st.session_state.av_edited_df[["Incluir", "ID", "H", "Q"]],
                         column_config={
-                            "Incluir": st.column_config.CheckboxColumn("Activo", default=True, width="small"),
-                            "ID": st.column_config.NumberColumn("ID", disabled=True, width="small"),
-                            "H": st.column_config.NumberColumn("H", disabled=True, format="%.2f", width="small"),
-                            "Q": st.column_config.NumberColumn("Q", disabled=True, format="%.2f", width="small"),
-                            "V_af": None, "V_per": None, "V": None
+                            "Incluir": st.column_config.CheckboxColumn("Activo", default=True),
+                            "ID": st.column_config.NumberColumn("ID", disabled=True),
+                            "H": st.column_config.NumberColumn("H (m)", disabled=True, format="%.2f"),
+                            "Q": st.column_config.NumberColumn("Q (m³/s)", disabled=True, format="%.2f"),
                         },
                         disabled=False,
                         hide_index=True,
                         use_container_width=True,
                         key="av_editor"
                     )
-
+                    
                     st.caption("Modelos de ajuste")
-                    lineal = st.checkbox("Lineal", value=st.session_state.opts_modelos_av["lineal"])
-                    exp = st.checkbox("Exponencial", value=st.session_state.opts_modelos_av["exp"])
-                    log = st.checkbox("Logarítmica", value=st.session_state.opts_modelos_av["log"])
-                    pot = st.checkbox("Potencial", value=st.session_state.opts_modelos_av["pot"])
-
-                    # --- Input para la banda ---
-                    st.caption("Configuración General (Aplica a todos los métodos)")
-                    banda_input = st.number_input("Banda de Validación (%)", 
-                                                  min_value=1.0, max_value=50.0, 
-                                                  value=float(st.session_state.banda_error_global), 
-                                                  step=1.0)
-
+                    lineal_av = st.checkbox("Lineal", value=st.session_state.opts_modelos_av["lineal"])
+                    exp_av = st.checkbox("Exponencial", value=st.session_state.opts_modelos_av["exp"])
+                    log_av = st.checkbox("Logarítmica", value=st.session_state.opts_modelos_av["log"])
+                    pot_av = st.checkbox("Potencial", value=st.session_state.opts_modelos_av["pot"])
+                    
+                    st.caption("Configuración General")
+                    opciones_banda = ["Estable (10%)", "Inestable (15%)"]
+                    indice_actual = 0 if st.session_state.banda_error_global == 10 else 1
+                    tipo_seccion = st.radio(
+                        "Tipo de sección:",
+                        options=opciones_banda,
+                        index=indice_actual,
+                        horizontal=True
+                    )
+                    
                     col1, col2 = st.columns(2)
                     with col1:
-                        submitted = st.form_submit_button("Aplicar")
+                        submitted_av = st.form_submit_button("Aplicar")
                     with col2:
-                        cancelled = st.form_submit_button("Cancelar")
-
-                    if submitted:
-                        st.session_state.av_edited_df = edited
-                        st.session_state.opts_modelos_av["lineal"] = lineal
-                        st.session_state.opts_modelos_av["exp"] = exp
-                        st.session_state.opts_modelos_av["log"] = log
-                        st.session_state.opts_modelos_av["pot"] = pot
-                        # --- Guardar banda ---
-                        st.session_state.banda_error_global = banda_input
+                        cancelled_av = st.form_submit_button("Cancelar")
+                    
+                    if submitted_av:
+                        st.session_state.av_edited_df = edited_av
+                        st.session_state.opts_modelos_av["lineal"] = lineal_av
+                        st.session_state.opts_modelos_av["exp"] = exp_av
+                        st.session_state.opts_modelos_av["log"] = log_av
+                        st.session_state.opts_modelos_av["pot"] = pot_av
+                        if tipo_seccion == "Estable (10%)":
+                            st.session_state.banda_error_global = 10.0
+                        else:
+                            st.session_state.banda_error_global = 15.0
                         st.rerun()
-                    elif cancelled:
+                    elif cancelled_av:
                         st.rerun()
-
-        # --- Gráficas ---
+        
+        # --- GRÁFICAS ---
         col_v, col_q_av = st.columns(2)
         with col_v:
             st.subheader("Velocidad vs Nivel (H)")
@@ -2123,28 +2527,35 @@ with tab5:
         with col_q_av:
             st.subheader("Curva de Gasto")
             placeholder_q_av = st.empty()
-
-        # --- Leer estado ---
-        edited_av = st.session_state.av_edited_df
+        
+        # --- LEER ESTADO ACTUAL ---
         mostrar_lineal_av = st.session_state.opts_modelos_av["lineal"]
         mostrar_exp_av = st.session_state.opts_modelos_av["exp"]
         mostrar_log_av = st.session_state.opts_modelos_av["log"]
         mostrar_pot_av = st.session_state.opts_modelos_av["pot"]
-
-        # --- Separar activos e inactivos ---
-        activos_av = edited_av[edited_av["Incluir"] == True].copy()
-        inactivos_av = edited_av[edited_av["Incluir"] == False].copy()
-
-        if fuente_v == "Velocidad de aforos (V_af)":
+        
+        # Obtener DataFrames
+        df_original_av = st.session_state.av_data.copy()
+        df_edit_av = st.session_state.av_edited_df.copy()
+        
+        ids_activos_av = df_edit_av[df_edit_av["Incluir"] == True]["ID"].values
+        ids_inactivos_av = df_edit_av[df_edit_av["Incluir"] == False]["ID"].values
+        
+        activos_av = df_original_av[df_original_av["ID"].isin(ids_activos_av)].copy()
+        inactivos_av = df_original_av[df_original_av["ID"].isin(ids_inactivos_av)].copy()
+        
+        # Asignar V según fuente
+        if fuente_v == "Velocidad de aforos":
             activos_av["V"] = activos_av["V_af"]
             inactivos_av["V"] = inactivos_av["V_af"]
         else:
             activos_av["V"] = activos_av["V_per"]
             inactivos_av["V"] = inactivos_av["V_per"]
-
+        
+        # Filtrar valores positivos
         activos_av = activos_av[activos_av["V"] > 0].dropna(subset=["V"])
         inactivos_av = inactivos_av[inactivos_av["V"] > 0].dropna(subset=["V"])
-
+        
         if len(activos_av) < 2:
             st.error("Necesitas al menos 2 puntos activos con velocidad válida para calcular la curva.")
         else:
@@ -2155,183 +2566,226 @@ with tab5:
             X_val_av = np.array(H_act_av)
             Y_val_av = np.array(V_act_av)
             
-            # --- Ajustes de modelos (para V vs H) ---
+            # --- INTERPOLADOR DE GEOMETRÍA PARA ÁREA ---
+            from scipy.interpolate import interp1d
+            df_g = st.session_state.df_geo.copy()
+            H_min_geo = df_g["H (m)"].min()
+            H_max_geo = df_g["H (m)"].max()
+            interp_A_av = interp1d(df_g["H (m)"], df_g["Am (m2)"], kind='linear', fill_value='extrapolate')
+            
+            # --- AJUSTES DE MODELOS (V vs H) ---
             ajustes_av = {}
             mask_log_av = (X_val_av > 0) & (Y_val_av > 0)
             X_log_av, Y_log_av = X_val_av[mask_log_av], Y_val_av[mask_log_av]
-
+            
             # Lineal
             p_lin_av = np.polyfit(X_val_av, Y_val_av, 1)
             Y_lin_av = p_lin_av[0]*X_val_av + p_lin_av[1]
             r_lin_av = np.corrcoef(Y_val_av, Y_lin_av)[0, 1]
-            r2_lin_av = r_lin_av**2
             ajustes_av["Lineal"] = {
-                "r": r_lin_av,
-                "R2": r2_lin_av,
+                "r": r_lin_av, "R2": r_lin_av**2,
                 "func": lambda x: p_lin_av[0]*x + p_lin_av[1],
                 "eq": f"V = {p_lin_av[0]:.3f}H + {p_lin_av[1]:.3f}"
             }
-
+            
             if len(X_log_av) > 1:
                 # Exponencial
                 p_exp_av = np.polyfit(X_val_av, np.log(Y_val_av), 1)
                 Y_exp_av = np.exp(p_exp_av[1]) * np.exp(p_exp_av[0]*X_val_av)
                 r_exp_av = np.corrcoef(Y_val_av, Y_exp_av)[0, 1]
-                r2_exp_av = r_exp_av**2
                 ajustes_av["Exponencial"] = {
-                    "r": r_exp_av,
-                    "R2": r2_exp_av,
+                    "r": r_exp_av, "R2": r_exp_av**2,
                     "func": lambda x: np.exp(p_exp_av[1]) * np.exp(p_exp_av[0]*x),
                     "eq": f"V = {np.exp(p_exp_av[1]):.3f} e^({p_exp_av[0]:.3f}H)"
                 }
-
+                
                 # Logarítmica
                 p_log_av = np.polyfit(np.log(X_log_av), Y_log_av, 1)
                 Y_log_fit_av = p_log_av[0]*np.log(X_log_av) + p_log_av[1]
                 r_log_av = np.corrcoef(Y_log_av, Y_log_fit_av)[0, 1]
-                r2_log_av = r_log_av**2
                 ajustes_av["Logarítmica"] = {
-                    "r": r_log_av,
-                    "R2": r2_log_av,
+                    "r": r_log_av, "R2": r_log_av**2,
                     "func": lambda x: np.where(x > 0, p_log_av[0]*np.log(x) + p_log_av[1], np.nan),
                     "eq": f"V = {p_log_av[0]:.3f} ln(H) + {p_log_av[1]:.3f}"
                 }
-
+                
                 # Potencial
                 p_pot_av = np.polyfit(np.log(X_log_av), np.log(Y_log_av), 1)
                 Y_pot_av = np.exp(p_pot_av[1]) * (X_log_av ** p_pot_av[0])
                 r_pot_av = np.corrcoef(Y_log_av, Y_pot_av)[0, 1]
-                r2_pot_av = r_pot_av**2
                 ajustes_av["Potencial"] = {
-                    "r": r_pot_av,
-                    "R2": r2_pot_av,
+                    "r": r_pot_av, "R2": r_pot_av**2,
                     "func": lambda x: np.where(x > 0, np.exp(p_pot_av[1]) * (x ** p_pot_av[0]), np.nan),
                     "eq": f"V = {np.exp(p_pot_av[1]):.3f} H^({p_pot_av[0]:.3f})"
                 }
-
-            # --- Interpoladores para calcular A exacto y luego el MAPE ---
-            df_g = st.session_state.df_geo.copy()
-            interp_A_av = interp1d(df_g["H (m)"], df_g["Am (m2)"], kind='linear', fill_value='extrapolate')
             
+            # --- CALCULAR MAPE Y σq PARA CADA MODELO ---
             A_act_av = interp_A_av(X_val_av)
-
-            # Calcular MAPE y Error de Procedimiento para cada modelo
             for k, v in ajustes_av.items():
                 V_est_av = v["func"](X_val_av)
-                # Fórmula de Área-Velocidad: Q = V * A
                 Q_est_av = V_est_av * A_act_av
-                
-                # 1. Calcular MAPE original
                 mask_err_av = (Q_act_av != 0) & np.isfinite(Q_est_av)
                 if np.any(mask_err_av):
-                    error_mape_av = np.mean(np.abs((Q_est_av[mask_err_av] - Q_act_av[mask_err_av]) / Q_act_av[mask_err_av])) * 100
+                    v["MAPE"] = np.mean(np.abs((Q_est_av[mask_err_av] - Q_act_av[mask_err_av]) / Q_act_av[mask_err_av])) * 100
+                    v["Sigma_q"] = calcular_error_procedimiento(Q_act_av[mask_err_av], Q_est_av[mask_err_av], K=2)
                 else:
-                    error_mape_av = np.nan
-                v["MAPE"] = error_mape_av
-                
-                # 2. Calcular el NUEVO Error de Procedimiento (Sigma)
-                # Usamos K=2 porque los modelos (Lineal, Exp, Log, Pot) tienen 2 parámetros (ej. a y b)
-                error_sigma_av = calcular_error_procedimiento(Q_act_av, Q_est_av, K=2)
-                v["Sigma_q"] = error_sigma_av
+                    v["MAPE"] = np.nan
+                    v["Sigma_q"] = np.nan
+            
+            # --- SELECTOR DE MÉTODO Y TABLA DE MODELOS ---
+            opciones_metodo_av = ["Automático (Menor MAPE)", "Potencial", "Logarítmica", "Exponencial", "Lineal", "Compuesta (Por tramos)"]
+            idx_metodo_av = 0
+            if "metodo_select_av" in st.session_state:
+                if st.session_state.metodo_select_av in opciones_metodo_av:
+                    idx_metodo_av = opciones_metodo_av.index(st.session_state.metodo_select_av)
+            
+            st.markdown("---")
+            metodo_seleccionado_av = st.selectbox(
+                "Método Matemático Principal:",
+                opciones_metodo_av,
+                index=idx_metodo_av,
+                key="metodo_select_av"
+            )
+            
+            # --- LÓGICA PARA CURVA COMPUESTA ---
+            if metodo_seleccionado_av == "Compuesta (Por tramos)":
+                st.markdown("#### 🔀 Configuración de Curva Compuesta")
+                col_c1, col_c2, col_c3 = st.columns(3)
 
-            # --- Selector de método y tabla de modelos ---
-            col_metodo_av, col_modelos_av = st.columns([1, 2])
-            with col_metodo_av:
-                metodo_seleccionado_av = st.selectbox(
-                    "Método Matemático:",
-                    ["Automático (Menor MAPE)", "Potencial", "Logarítmica", "Exponencial", "Lineal"],
-                    key="metodo_select_av"
-                )
-            with col_modelos_av:
-                st.subheader("Comparación de modelos")
-                # ACTUALIZADO: Añadimos ambas columnas de error a la tabla
-                df_modelos_av = pd.DataFrame([
-                    {
-                        "Modelo": k, 
-                        "r": f"{v['r']:.4f}", 
-                        "R²": f"{v['R2']:.4f}", 
-                        "MAPE (%)": f"{v['MAPE']:.2f}", 
-                        "Error σq (%)": f"{v['Sigma_q']:.2f}" if pd.notna(v['Sigma_q']) else "N/A", 
-                        "Ecuación": v['eq']
-                    }
-                    for k, v in ajustes_av.items()
-                ])
-                # Ordenar la tabla del menor error σq al mayor
-                df_modelos_av['Error_num'] = pd.to_numeric(df_modelos_av['Error σq (%)'], errors='coerce')
-                df_modelos_av = df_modelos_av.sort_values('Error_num').drop(columns=['Error_num'])
-                
-                st.dataframe(df_modelos_av, use_container_width=True, hide_index=True)
+                h_min_safe = float(H_act_av.min()) if len(H_act_av) > 0 else 0.0
+                h_max_safe = float(H_max_geo)
+                h_med_safe = float(np.median(H_act_av)) if len(H_act_av) > 0 else 1.0
 
-           # Seleccionar modelo
+                with col_c1:
+                    h_quiebre_av = st.number_input(
+                        "Nivel de Quiebre (H en m) - Área-Velocidad",
+                        min_value=h_min_safe,
+                        max_value=h_max_safe,
+                        value=st.session_state.get('av_h_quiebre', h_med_safe),
+                        step=0.1,
+                        key='av_h_quiebre'
+                    )
+                with col_c2:
+                    modelo_inf_av = st.selectbox(
+                        "Modelo Inferior (H < Quiebre)",
+                        ["Potencial", "Logarítmica", "Exponencial", "Lineal"],
+                        index=0,
+                        key='av_modelo_inf'
+                    )
+                with col_c3:
+                    modelo_sup_av = st.selectbox(
+                        "Modelo Superior (H ≥ Quiebre)",
+                        ["Exponencial", "Lineal", "Potencial", "Logarítmica"],
+                        index=1,
+                        key='av_modelo_sup'
+                    )
+
+                def func_compuesta_av(x):
+                    h_q = st.session_state.av_h_quiebre
+                    m_inf = st.session_state.av_modelo_inf
+                    m_sup = st.session_state.av_modelo_sup
+                    f_inf = ajustes_av[m_inf]["func"] if m_inf in ajustes_av else ajustes_av.get("Lineal")["func"]
+                    f_sup = ajustes_av[m_sup]["func"] if m_sup in ajustes_av else ajustes_av.get("Lineal")["func"]
+                    return np.where(x < h_q, f_inf(x), f_sup(x))
+
+                V_est_comp_av = func_compuesta_av(X_val_av)
+                Q_est_comp_av = V_est_comp_av * A_act_av
+                mask_err_comp_av = (Q_act_av != 0) & np.isfinite(Q_est_comp_av)
+
+                if np.any(mask_err_comp_av):
+                    mape_comp_av = np.mean(np.abs((Q_est_comp_av[mask_err_comp_av] - Q_act_av[mask_err_comp_av]) / Q_act_av[mask_err_comp_av])) * 100
+                    sigma_comp_av = calcular_error_procedimiento(Q_act_av[mask_err_comp_av], Q_est_comp_av[mask_err_comp_av], K=2)
+                else:
+                    mape_comp_av, sigma_comp_av = np.nan, np.nan
+
+                ajustes_av["Compuesta (Por tramos)"] = {
+                    "func": func_compuesta_av,
+                    "eq": f"{modelo_inf_av} (<{h_quiebre_av:.2f}m) y {modelo_sup_av} (≥{h_quiebre_av:.2f}m)",
+                    "MAPE": mape_comp_av,
+                    "Sigma_q": sigma_comp_av,
+                    "r": np.nan, "R2": np.nan
+                }
+            
+            # --- TABLA COMPARATIVA DE MODELOS ---
+            st.subheader("Comparación de modelos")
+            df_modelos_av = pd.DataFrame([
+                {
+                    "Modelo": k, 
+                    "r": f"{v['r']:.4f}" if pd.notna(v['r']) else "-", 
+                    "R²": f"{v['R2']:.4f}" if pd.notna(v['R2']) else "-", 
+                    "Error Absoluto (%)": f"{v['MAPE']:.2f}" if pd.notna(v['MAPE']) else "N/A",
+                    "σq (%)": f"{v['Sigma_q']:.2f}" if pd.notna(v['Sigma_q']) else "N/A",
+                    "Ecuación": v['eq']
+                }
+                for k, v in ajustes_av.items()
+            ])
+            df_modelos_av['MAPE_num'] = pd.to_numeric(df_modelos_av['Error Absoluto (%)'], errors='coerce')
+            df_modelos_av = df_modelos_av.sort_values('MAPE_num', na_position='last').drop(columns=['MAPE_num'])
+            st.dataframe(df_modelos_av, use_container_width=True, hide_index=True)
+            
+            # --- SELECCIÓN DEL MODELO PRINCIPAL ---
             if metodo_seleccionado_av == "Automático (Menor MAPE)":
-                # Usamos min() porque queremos el error más bajo
-                mejor_modelo_av = min(ajustes_av, key=lambda k: ajustes_av[k]["MAPE"])
+                mejor_modelo_av = min(
+                    (k for k in ajustes_av if pd.notna(ajustes_av[k]["MAPE"]) and k != "Compuesta (Por tramos)"),
+                    key=lambda k: ajustes_av[k]["MAPE"],
+                    default=list(ajustes_av.keys())[0]
+                )
             else:
                 mejor_modelo_av = metodo_seleccionado_av
             
             funcion_optima_av = ajustes_av[mejor_modelo_av]["func"]
-            st.info(f"Modelo seleccionado: **{mejor_modelo_av}** con MAPE = {ajustes_av[mejor_modelo_av]['MAPE']:.2f}% (R² = {ajustes_av[mejor_modelo_av]['R2']:.4f})")
-
-            # --- Aplicar a geometría (extrapolación) ---
-            df_g = st.session_state.df_geo.copy()
-            H_min_geo = df_g["H (m)"].min()
-            H_max_geo = df_g["H (m)"].max()
+            
+            r2_display_av = f" (R² = {ajustes_av[mejor_modelo_av]['R2']:.4f})" if pd.notna(ajustes_av[mejor_modelo_av]['R2']) else ""
+            st.info(f"Modelo seleccionado (Línea principal): **{mejor_modelo_av}** con Error Absoluto = {ajustes_av[mejor_modelo_av]['MAPE']:.2f}%{r2_display_av}")
+            
+            # --- APLICAR A GEOMETRÍA (EXTRAPOLACIÓN) ---
             paso_fino = 0.2
             H_fino_av = np.arange(H_min_geo, H_max_geo + paso_fino, paso_fino)
-
-            interp_A = interp1d(df_g["H (m)"], df_g["Am (m2)"], kind='linear', fill_value='extrapolate')
-            # --- Calcular Q_fino_av ---
+            
             V_fino_av = funcion_optima_av(H_fino_av)
-            A_fino_av = interp_A(H_fino_av)
+            A_fino_av = interp_A_av(H_fino_av)
             Q_fino_av = V_fino_av * A_fino_av
-
-            # --- Filtrar valores no finitos y negativos ---
+            
+            # Filtrar valores no finitos y negativos
             mask_finite_av = np.isfinite(Q_fino_av)
             if not np.all(mask_finite_av):
-                st.warning(f"Se encontraron {np.sum(~mask_finite_av)} valores no finitos en la curva Área-Velocidad. Se eliminarán.")
+                st.warning(f"Se encontraron {np.sum(~mask_finite_av)} valores no finitos en la curva. Se eliminarán.")
                 H_fino_av = H_fino_av[mask_finite_av]
                 Q_fino_av = Q_fino_av[mask_finite_av]
-
-            # Asegurar que los caudales no sean negativos
+            
             Q_fino_av = np.maximum(Q_fino_av, 0)
-
-            # Suavizado con interpolación lineal
-            from scipy.interpolate import interp1d
+            
+            # Suavizado con interpolación lineal (opcional)
             mask_dentro_av = (H_fino_av >= H_min_geo) & (H_fino_av <= H_max_geo)
             H_dentro_av = H_fino_av[mask_dentro_av]
             Q_dentro_av = Q_fino_av[mask_dentro_av]
-
+            
             if len(H_dentro_av) > 1:
                 f_lin_av = interp1d(H_dentro_av, Q_dentro_av, kind='linear', fill_value='extrapolate')
                 Q_suave_av = f_lin_av(H_fino_av)
             else:
                 Q_suave_av = Q_fino_av
-
+            
             # Colores base
             color_activos = '#00ccff'
             color_inactivos = '#ff5555'
             color_ajuste = '#55ff55'
             color_curva = '#ffaa00'
             color_banda = 'rgba(200, 200, 200, 0.15)'
-
-            # --- Preparar funciones adicionales para V vs H ---
+            
+            # --- PREPARAR FUNCIONES ADICIONALES PARA V vs H ---
             funcs_adic_av = {}
-            if 'Lineal' in ajustes_av:
-                funcs_adic_av['lineal'] = (ajustes_av['Lineal']['func'], mostrar_lineal_av)
-            if 'Exponencial' in ajustes_av:
-                funcs_adic_av['exp'] = (ajustes_av['Exponencial']['func'], mostrar_exp_av)
-            if 'Logarítmica' in ajustes_av:
-                funcs_adic_av['log'] = (ajustes_av['Logarítmica']['func'], mostrar_log_av)
-            if 'Potencial' in ajustes_av:
-                funcs_adic_av['pot'] = (ajustes_av['Potencial']['func'], mostrar_pot_av)
-
-            # --- Crear figura V vs H ---
+            if 'Lineal' in ajustes_av: funcs_adic_av['lineal'] = (ajustes_av['Lineal']['func'], mostrar_lineal_av)
+            if 'Exponencial' in ajustes_av: funcs_adic_av['exp'] = (ajustes_av['Exponencial']['func'], mostrar_exp_av)
+            if 'Logarítmica' in ajustes_av: funcs_adic_av['log'] = (ajustes_av['Logarítmica']['func'], mostrar_log_av)
+            if 'Potencial' in ajustes_av: funcs_adic_av['pot'] = (ajustes_av['Potencial']['func'], mostrar_pot_av)
+            
             H_smooth_av = np.linspace(min(X_val_av)*0.5, max(X_val_av)*1.5, 200)
             V_sel_av = funcion_optima_av(H_smooth_av)
             inactivos_v_av = inactivos_av[['H', 'V']].rename(columns={'V': 'Y'}) if not inactivos_av.empty else None
-
+            
             fig_v = crear_figura_k(
-                titulo="Velocidad vs Nivel - Área-Velocidad",
+                titulo="Velocidad vs Nivel (H) - Área-Velocidad",
                 H_act=H_act_av,
                 Y_act=V_act_av,
                 inactivos=inactivos_v_av,
@@ -2342,11 +2796,11 @@ with tab5:
                 color_inactivos=color_inactivos,
                 color_ajuste=color_ajuste,
                 xlabel="Nivel H (m)",
-                ylabel="V (m/s)"
+                ylabel="Velocidad (m/s)"
             )
             placeholder_v.plotly_chart(fig_v, use_container_width=True)
-
-            # --- Crear figura Curva de Gasto ---
+            
+            # --- GRÁFICA CURVA DE GASTO CON TODOS LOS MODELOS ACTIVOS ---
             fig_q_av = crear_figura_curva(
                 titulo=f"Curva de Gasto - usando {fuente_v}",
                 H_fino=H_fino_av,
@@ -2360,69 +2814,104 @@ with tab5:
                 color_banda=color_banda,
                 banda_pct=st.session_state.banda_error_global
             )
-            placeholder_q_av.plotly_chart(fig_q_av, use_container_width=True)
-
-            # --- Calcular error promedio usando la función matemática pura de Área-Velocidad ---
-            prom_err_av = ajustes_av[mejor_modelo_av]["MAPE"]
             
-            errores_av = []
+            # AGREGAR MODELOS ADICIONALES A LA CURVA DE GASTO
+            colores_extras = {'Lineal': 'cyan', 'Exponencial': 'magenta', 'Logarítmica': 'yellow', 'Potencial': 'lime'}
+            mapa_nombres_av = {'Lineal': mostrar_lineal_av, 'Exponencial': mostrar_exp_av, 'Logarítmica': mostrar_log_av, 'Potencial': mostrar_pot_av}
+            
+            for nombre_mod, dict_mod in ajustes_av.items():
+                if mapa_nombres_av.get(nombre_mod, False) and nombre_mod != mejor_modelo_av and nombre_mod != "Compuesta (Por tramos)":
+                    V_extra_av = dict_mod["func"](H_fino_av)
+                    Q_extra_av = V_extra_av * interp_A_av(H_fino_av)
+                    Q_extra_av = np.maximum(Q_extra_av, 0)
+                    
+                    fig_q_av.add_trace(go.Scatter(
+                        x=Q_extra_av, y=H_fino_av, mode='lines', name=f'Q ({nombre_mod})',
+                        line=dict(color=colores_extras[nombre_mod], width=2, dash='dot')
+                    ))
+            
+            placeholder_q_av.plotly_chart(fig_q_av, use_container_width=True)
+            
+            # --- TABLA DE ERRORES CON TODOS LOS MODELOS ---
+            errores_data_av = []
             for _, row in activos_av.iterrows():
                 h_val_av = row["H"]
                 q_obs_av = row["Q"]
-                
-                # Calculamos V
-                v_est_av = funcion_optima_av(h_val_av)
-                
-                # Extraemos A exacto para este H
                 a_val_av = float(interp_A_av(h_val_av))
                 
-                # Q simulado puro
-                q_est_puro_av = v_est_av * a_val_av
-                
-                err_pct_av = abs(q_est_puro_av - q_obs_av) / q_obs_av * 100 if q_obs_av != 0 else np.nan
-                
-                errores_av.append({
+                fila_error_av = {
                     "H (m)": h_val_av, 
-                    "Q Estimado (m³/s)": q_est_puro_av,
-                    "Q Aforado (m³/s)": q_obs_av, 
-                    "Error %": err_pct_av
-                })
-
-            # --- Fila de guardado y error actual (justo después de gráficas) ---
-            # --- Extraer errores del mejor modelo ---
+                    "Q Aforado (m³/s)": q_obs_av
+                }
+                
+                for nombre_mod, dict_mod in ajustes_av.items():
+                    v_est_av = dict_mod["func"](h_val_av)
+                    q_est_av = v_est_av * a_val_av
+                    err_pct_av = abs(q_est_av - q_obs_av) / q_obs_av * 100 if q_obs_av != 0 else np.nan
+                    fila_error_av[f"Error {nombre_mod} (%)"] = err_pct_av
+                
+                errores_data_av.append(fila_error_av)
+            
+            # --- OBTENER ERRORES GLOBALES DEL MEJOR MODELO ---
             prom_mape_av = ajustes_av[mejor_modelo_av]["MAPE"]
             prom_sigma_av = ajustes_av[mejor_modelo_av]["Sigma_q"]
             
-            # ... (Aquí dejas el código intacto donde calculas la lista 'errores_av' para la tabla individual) ...
-
-            # --- Fila de guardado y métricas actuales ---
+            # --- FILA DE GUARDADO Y MÉTRICAS ---
             col_guardar_av, col_mape_av, col_sigma_av = st.columns([1, 1, 1])
             with col_guardar_av:
                 if st.button("💾 Guardar curva", key="guardar_av"):
                     if len(H_fino_av) > 0 and len(Q_suave_av) > 0 and np.isfinite(Q_suave_av).any():
                         st.session_state.av_curve = pd.DataFrame({"H": H_fino_av, "Q": Q_suave_av})
-                        st.session_state.av_error = prom_mape_av # Guardamos MAPE para retrocompatibilidad
-                        st.session_state.av_error_sigma = prom_sigma_av # Guardamos el nuevo error
-                        st.success("Curva guardada")
+                        st.session_state.av_error = prom_mape_av
+                        st.session_state.av_error_sigma = prom_sigma_av
+                        st.success("Curva guardada en la sesión.")
                     else:
                         st.error("No hay curva válida")
+                
+                # Mostrar si ya hay curva guardada
+                if "av_curve" in st.session_state and st.session_state.av_curve is not None:
+                    st.success("✅ Curva definitiva cargada en memoria")
+                    with st.expander("Ver tabla guardada"):
+                        st.dataframe(st.session_state.av_curve, height=150, use_container_width=True)
             with col_mape_av:
-                st.metric("MAPE Promedio", f"{prom_mape_av:.1f}%")
+                st.metric("Error Absoluto Promedio", f"{prom_mape_av:.1f}%" if pd.notna(prom_mape_av) else "N/A")
             with col_sigma_av:
                 st.metric("Error Procedimiento (σq)", f"{prom_sigma_av:.1f}%" if pd.notna(prom_sigma_av) else "N/A")
-
-            # --- Tabla de errores (sin métrica adicional) ---
+            
+            # --- TABLA DE ERRORES CON SEMÁFORO ---
             st.markdown("---")
-            st.subheader("Errores en aforos activos")
-            df_err_av = pd.DataFrame(errores_av)
-            st.dataframe(df_err_av.style.format({"H (m)": "{:.2f}", "Q Estimado (m³/s)": "{:.2f}",
-                                                  "Q Aforado (m³/s)": "{:.2f}", "Error %": "{:.1f}"}),
-                         use_container_width=True, hide_index=True)
+            st.subheader("Errores en aforos activos (Todos los modelos)")
+            
+            df_errores_av = pd.DataFrame(errores_data_av)
+            df_errores_av = df_errores_av.sort_values(by="H (m)", ascending=True).reset_index(drop=True)
+            
+            cols_error_av = [col for col in df_errores_av.columns if "Error" in col]
+            
+            def color_semaforo(val):
+                if pd.isna(val):
+                    return ''
+                try:
+                    v = float(val)
+                    if v <= 10:
+                        return 'background-color: rgba(39, 174, 96, 0.4); color: white;'  # Verde
+                    elif v <= 50:
+                        return 'background-color: rgba(243, 156, 18, 0.4); color: white;'  # Amarillo
+                    else:
+                        return 'background-color: rgba(192, 57, 43, 0.4); color: white;'  # Rojo
+                except:
+                    return ''
+            
+            format_dict_av = {"H (m)": "{:.2f}", "Q Aforado (m³/s)": "{:.2f}"}
+            for c in cols_error_av:
+                format_dict_av[c] = "{:.1f}"
+            
+            styled_df_av = df_errores_av.style.format(format_dict_av).map(color_semaforo, subset=cols_error_av)
+            st.dataframe(styled_df_av, use_container_width=True, hide_index=True)
 
 # ================== PESTAÑA 6: MÍNIMOS Y H0 ==================
 with tab6:
     st.header("Cálculo de H0 (Nivel de Caudal Nulo)")
-    
+
     col_info1, col_info2 = st.columns(2)
     with col_info1:
         st.info("""
@@ -2447,11 +2936,11 @@ with tab6:
 
     resultados_running = {}
     resultados_johnson = {}
-    
-    # Para la tabla resumen
     resumen_h0 = []
 
     from scipy.interpolate import interp1d
+    import numpy as np
+    import pandas as pd
 
     df_aforos = st.session_state.df_aforos
     hay_aforos = df_aforos is not None and not df_aforos.empty
@@ -2466,19 +2955,18 @@ with tab6:
         if llave in st.session_state and st.session_state[llave] is not None:
             df = st.session_state[llave].copy()
             df_positivos = df[df["Q"] > 0.001].sort_values(by="H").drop_duplicates(subset=["H"])
-            
+
             if len(df_positivos) > 3:
                 df_sorted_q = df_positivos.sort_values(by="Q").drop_duplicates(subset=["Q"])
                 f_H_inversa = interp1d(df_sorted_q["Q"], df_sorted_q["H"], kind='linear', bounds_error=False, fill_value='extrapolate')
-                
+
                 # --- RUNNING ---
                 H_max = df_positivos["H"].max()
                 H_min = df_positivos["H"].min()
-
                 Q_max = df_positivos.loc[df_positivos["H"] == H_max, "Q"].values[0]
                 Q_min = df_positivos.loc[df_positivos["H"] == H_min, "Q"].values[0]
                 Q_int = np.sqrt(Q_max * Q_min)
-                
+
                 H_max_calc = float(f_H_inversa(Q_max))
                 H_int = float(f_H_inversa(Q_int))
                 H_min_calc = float(f_H_inversa(Q_min))
@@ -2486,10 +2974,8 @@ with tab6:
                 denominador = (Q_min - Q_int) if (Q_min - Q_int) != 0 else 0.0001
                 m1 = (H_int - H_max_calc) / denominador
                 b1 = H_max_calc - m1 * Q_int
-
                 m2 = (H_min_calc - H_int) / denominador
                 b2 = H_int - m2 * Q_int
-                
                 m_diff = (m2 - m1) if (m2 - m1) != 0 else 0.0001
                 Q_prima = (b1 - b2) / m_diff
                 Ho_run = b2 + m2 * Q_prima
@@ -2502,95 +2988,129 @@ with tab6:
                 }
 
                 # --- JOHNSON ---
+                Ho_johnson = np.nan
                 if hay_aforos:
                     H1_j = float(f_H_inversa(Q1_j))
                     H2_j = float(f_H_inversa(Q2_j))
                     H3_j = float(f_H_inversa(Q3_j))
-                    
                     denom_j = (H1_j + H2_j - 2 * H3_j)
                     if denom_j != 0:
                         Ho_johnson = (H1_j * H2_j - H3_j**2) / denom_j
-                    else:
-                        Ho_johnson = np.nan
-
                     resultados_johnson[nombre] = {
                         "Q-1 (Mín Aforo)": Q1_j, "Q-2 (Máx Aforo)": Q2_j, "Q-3 (Intermedio)": Q3_j,
                         "H-1": H1_j, "H-2": H2_j, "H-3": H3_j,
                         "Ho": Ho_johnson
                     }
-                else:
-                    Ho_johnson = np.nan
-                    
+
                 # Guardar para el resumen
                 resumen_h0.append({
                     "Método": nombre,
                     "H0 (Running)": f"{Ho_run:.3f} m",
                     "H0 (Johnson)": f"{Ho_johnson:.3f} m" if pd.notna(Ho_johnson) else "N/A",
                     "_val_run": Ho_run,
-                    "_val_john": Ho_johnson
+                    "_val_john": Ho_johnson,
+                    "_run_negativo": Ho_run < 0,
+                    "_john_negativo": pd.notna(Ho_johnson) and Ho_johnson < 0
                 })
 
     # --- RENDERIZADO VISUAL ---
     if resumen_h0:
         st.markdown("---")
         st.subheader("🏆 Comparativa de Resultados H0")
-        
-        # DataFrame Resumen
+
         df_resumen = pd.DataFrame(resumen_h0)
-        df_mostrar = df_resumen[["Método", "H0 (Running)", "H0 (Johnson)"]]
-        
+        # Marcar valores negativos en la tabla
+        def formatear_con_advertencia(val, es_negativo):
+            if pd.isna(val) or val == "N/A":
+                return "N/A"
+            if es_negativo:
+                return f"⚠️ {val} (negativo)"
+            return val
+
+        df_mostrar = df_resumen.copy()
+        df_mostrar["H0 (Running)"] = df_mostrar.apply(
+            lambda row: formatear_con_advertencia(row["H0 (Running)"], row["_run_negativo"]), axis=1
+        )
+        df_mostrar["H0 (Johnson)"] = df_mostrar.apply(
+            lambda row: formatear_con_advertencia(row["H0 (Johnson)"], row["_john_negativo"]), axis=1
+        )
+        df_mostrar = df_mostrar[["Método", "H0 (Running)", "H0 (Johnson)"]]
+
         col_tabla, col_botones = st.columns([1.5, 1])
-        
+
         with col_tabla:
             st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
-            
+
         with col_botones:
             st.write("**Selección Oficial de H0**")
             st.caption("Elige qué H0 se usará como cota base para cada método.")
-            
-            # Inicializar variables en session_state si no existen
+
             if 'h0_seleccionados' not in st.session_state:
                 st.session_state.h0_seleccionados = {}
-                
+            if 'h0_fuentes' not in st.session_state: # NUEVO: Guardaremos la etiqueta
+                st.session_state.h0_fuentes = {}
+
             for idx, row in df_resumen.iterrows():
                 metodo = row["Método"]
-                
-                # Definir opciones disponibles
-                opciones = ["Running"]
-                if pd.notna(row["_val_john"]):
+                run_val = row["_val_run"]
+                john_val = row["_val_john"] if pd.notna(row["_val_john"]) else None
+
+                opciones = []
+                valores_opciones = []
+                if not row["_run_negativo"]:
+                    opciones.append("Running")
+                    valores_opciones.append(run_val)
+                if not row["_john_negativo"] and john_val is not None:
                     opciones.append("Johnson")
-                    
-                # Selector
-                eleccion = st.radio(
-                    f"Para {metodo}:", 
-                    options=opciones,
-                    horizontal=True,
-                    key=f"radio_h0_{metodo}"
-                )
-                
-                # Guardar en memoria el valor numérico elegido
-                if eleccion == "Running":
-                    st.session_state.h0_seleccionados[metodo] = row["_val_run"]
+                    valores_opciones.append(john_val)
+
+                if len(opciones) == 0:
+                    st.warning(f"⚠️ Para {metodo}, ambos dan H0 negativo. Se usará H0 = 0.")
+                    st.session_state.h0_seleccionados[metodo] = 0.0
+                    st.session_state.h0_fuentes[metodo] = "Forzado (0)" # NUEVO
+                    st.caption(f"**{metodo}:** H0 = 0 (forzado)")
                 else:
-                    st.session_state.h0_seleccionados[metodo] = row["_val_john"]
-                    
-        # Confirmación de selección
+                    if len(opciones) == 1:
+                        st.session_state.h0_seleccionados[metodo] = valores_opciones[0]
+                        st.session_state.h0_fuentes[metodo] = opciones[0] # NUEVO
+                        st.caption(f"**{metodo}:** seleccionado automáticamente **{opciones[0]}** (H0 = {valores_opciones[0]:.3f} m)")
+                    else:
+                        valor_guardado = st.session_state.h0_seleccionados.get(metodo, None)
+                        if valor_guardado is not None and valor_guardado in valores_opciones:
+                            indice_default = valores_opciones.index(valor_guardado)
+                        else:
+                            indice_default = 0
+
+                        eleccion = st.radio(
+                            f"Para {metodo}:",
+                            options=opciones,
+                            index=indice_default,
+                            horizontal=True,
+                            key=f"radio_h0_{metodo}"
+                        )
+                        if eleccion == "Running":
+                            st.session_state.h0_seleccionados[metodo] = run_val
+                            st.session_state.h0_fuentes[metodo] = "Running" # NUEVO
+                        else:
+                            st.session_state.h0_seleccionados[metodo] = john_val
+                            st.session_state.h0_fuentes[metodo] = "Johnson" # NUEVO
+
         st.success("✅ Selecciones guardadas en memoria para aplicar a los cálculos finales.")
-        
+
         # --- TABLAS DETALLADAS OCULTAS ---
         st.markdown("---")
         st.subheader("Desglose de Cálculos")
-        
+
         with st.expander("🔍 Ver parámetros detallados del Método de Running"):
             if resultados_running:
                 df_res_run = pd.DataFrame(resultados_running)
                 st.dataframe(df_res_run.style.format("{:.3f}"), use_container_width=True)
-                
+
         with st.expander("🔍 Ver parámetros detallados del Método de Johnson"):
             if resultados_johnson:
                 df_res_john = pd.DataFrame(resultados_johnson)
                 st.dataframe(df_res_john.style.format("{:.3f}"), use_container_width=True)
-                
+
         with st.expander("📐 Ver validación matemática formal (Ambos métodos)"):
             st.write("""
             Aunque Running y Johnson tienen enfoques distintos para seleccionar la terna de caudales evaluados, **ambos convergen en la misma resolución parabólica para estimar el nivel de caudal nulo ($H_0$)**:
@@ -2608,35 +3128,37 @@ with tab6:
 with tab7:
     st.header("Comparación de Métodos de Extrapolación")
 
-    # Verificar que existan las curvas de los métodos
     if (st.session_state.get("manning_curve") is None or 
         st.session_state.get("stevens_curve") is None or 
         st.session_state.get("av_curve") is None):
         st.warning("Primero debes calcular las curvas en cada método (pestañas 3, 4 y 5) con al menos 2 puntos activos.")
     else:
-        # Obtener niveles de comparación desde la geometría
         if st.session_state.get("df_geo") is None:
             st.error("No hay datos de geometría. Genera la tabla en la pestaña Geometría.")
         else:
-            # 1. NIVELES UNIFORMES PARA LA TABLA
-            H_niveles = np.sort(st.session_state.df_geo["H (m)"].unique())
+            H_niveles_base = np.sort(st.session_state.df_geo["H (m)"].unique())
             
             from scipy.interpolate import interp1d
             import numpy as np
+            import plotly.graph_objects as go
             
-            # Obtener los H0 seleccionados en la Pestaña 6
+            # Obtener los H0 y sus fuentes
             h0_dict = st.session_state.get('h0_seleccionados', {})
+            h0_fuentes = st.session_state.get('h0_fuentes', {}) # NUEVO
+            
             h0_man = h0_dict.get('Manning', None)
             h0_ste = h0_dict.get('Stevens', None)
             h0_av = h0_dict.get('Área-Velocidad', None)
+            
+            fuente_man = h0_fuentes.get('Manning', '') # NUEVO
+            fuente_ste = h0_fuentes.get('Stevens', '') # NUEVO
+            fuente_av = h0_fuentes.get('Área-Velocidad', '') # NUEVO
 
-            # Capturar aforos filtrados
             if 'df_aforos_activos' in st.session_state:
                 df_aforos_comp = st.session_state.df_aforos_activos
             else:
                 df_aforos_comp = st.session_state.df_aforos
 
-            # --- FUNCIONES PARA PREPARAR CURVAS GRÁFICAS ---
             def preparar_curva_grafico(df_curve, h0_val):
                 if df_curve is None or df_curve.empty:
                     return [], []
@@ -2661,7 +3183,6 @@ with tab7:
             H_ste_plot, Q_ste_plot = preparar_curva_grafico(st.session_state.stevens_curve, h0_ste)
             H_av_plot, Q_av_plot = preparar_curva_grafico(st.session_state.av_curve, h0_av)
 
-            # --- FUNCIONES PARA LA TABLA ---
             f_man = interp1d(st.session_state.manning_curve["H"], st.session_state.manning_curve["Q"], 
                              kind='linear', fill_value='extrapolate', bounds_error=False)
             f_ste = interp1d(st.session_state.stevens_curve["H"], st.session_state.stevens_curve["Q"], 
@@ -2676,14 +3197,19 @@ with tab7:
                 Q_arr = np.where(Q_arr < 0, np.nan, Q_arr)
                 return Q_arr
 
-            df_comp = pd.DataFrame({
-                "H (m)": H_niveles,
-                "Q_man (m³/s)": calcular_q_tabla(f_man, H_niveles, h0_man),
-                "Q_ste (m³/s)": calcular_q_tabla(f_ste, H_niveles, h0_ste),
-                "Q_av (m³/s)": calcular_q_tabla(f_av, H_niveles, h0_av)
-            })
+            st.markdown("### 🔍 Análisis Visual por Niveles de Interés")
+            st.write("Ajusta estos niveles (ej. percentiles P25 y P75) para trazar líneas de referencia en la gráfica y añadirlos a la tabla.")
+            
+            h_min_sug = df_aforos_comp["H_m"].quantile(0.25) if not df_aforos_comp.empty else H_niveles_base[0]
+            h_max_sug = df_aforos_comp["H_m"].quantile(0.75) if not df_aforos_comp.empty else H_niveles_base[-1]
 
-            # --- MÉTRICAS ---
+            col_p1, col_p2 = st.columns(2)
+            with col_p1:
+                nivel_interes_1 = st.number_input("Nivel 1 (Aguas bajas/P25):", value=float(h_min_sug), step=0.1, format="%.3f")
+            with col_p2:
+                nivel_interes_2 = st.number_input("Nivel 2 (Aguas altas/P75):", value=float(h_max_sug), step=0.1, format="%.3f")
+
+            st.markdown("---")
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Error Manning", f"{st.session_state.manning_error:.1f}%" if st.session_state.get("manning_error") else "N/A")
@@ -2692,7 +3218,6 @@ with tab7:
             with col3:
                 st.metric("Error Área-Velocidad", f"{st.session_state.av_error:.1f}%" if st.session_state.get("av_error") else "N/A")
 
-            # --- GRÁFICA COMPARATIVA ---
             fig_comp = go.Figure()
             
             if len(H_man_plot) > 0:
@@ -2712,16 +3237,47 @@ with tab7:
             if df_aforos_comp is not None and not df_aforos_comp.empty:
                 fig_comp.add_trace(go.Scatter(x=df_aforos_comp["CAUDAL TOTAL (m3/s)"], y=df_aforos_comp["H_m"], mode='markers', name='Aforos', marker=dict(color='white', size=8, line=dict(color='black', width=1))))
             
+            fig_comp.add_hline(
+                y=nivel_interes_1, line_dash="dash", line_color="#e74c3c", line_width=2,
+                annotation_text=f"Nivel 1: {nivel_interes_1:.2f} m", annotation_position="bottom right",
+                annotation_font_color="#e74c3c"
+            )
+            fig_comp.add_hline(
+                y=nivel_interes_2, line_dash="dash", line_color="#9b59b6", line_width=2,
+                annotation_text=f"Nivel 2: {nivel_interes_2:.2f} m", annotation_position="top right",
+                annotation_font_color="#9b59b6"
+            )
+
             fig_comp.update_layout(title="Curvas de Gasto Comparativas", xaxis_title="Caudal Q (m³/s)", yaxis_title="Nivel H (m)", hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5), plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font=dict(color='white'))
             st.plotly_chart(fig_comp, use_container_width=True)
 
-            # --- TABLA COMPARATIVA ---
-            st.subheader("Tabla de Caudales por Nivel (Geometría Base)")
+            st.markdown("---")
+
+            H_niveles_extendidos = np.append(H_niveles_base, [nivel_interes_1, nivel_interes_2])
+            H_niveles = np.unique(np.sort(H_niveles_extendidos))
+
+            df_comp = pd.DataFrame({
+                "H (m)": H_niveles,
+                "Q_man (m³/s)": calcular_q_tabla(f_man, H_niveles, h0_man),
+                "Q_ste (m³/s)": calcular_q_tabla(f_ste, H_niveles, h0_ste),
+                "Q_av (m³/s)": calcular_q_tabla(f_av, H_niveles, h0_av)
+            })
+
+            df_comp["Nota"] = ""
+            df_comp.loc[df_comp["H (m)"] == nivel_interes_1, "Nota"] = "🔴 Nivel Int. 1"
+            df_comp.loc[df_comp["H (m)"] == nivel_interes_2, "Nota"] = "🟣 Nivel Int. 2"
+
+            st.subheader("Tabla de Caudales por Nivel")
             
+            # --- NUEVO: AÑADIENDO LA FUENTE AL TEXTO ---
             cols_h0 = st.columns(3)
-            cols_h0[0].info(f"**H0 Manning:** {h0_man:.3f} m" if pd.notna(h0_man) else "**H0 Manning:** N/A")
-            cols_h0[1].warning(f"**H0 Stevens:** {h0_ste:.3f} m" if pd.notna(h0_ste) else "**H0 Stevens:** N/A")
-            cols_h0[2].success(f"**H0 Á-V:** {h0_av:.3f} m" if pd.notna(h0_av) else "**H0 Á-V:** N/A")
+            txt_man = f"**H0 Manning:** {h0_man:.3f} m ({fuente_man})" if pd.notna(h0_man) else "**H0 Manning:** N/A"
+            txt_ste = f"**H0 Stevens:** {h0_ste:.3f} m ({fuente_ste})" if pd.notna(h0_ste) else "**H0 Stevens:** N/A"
+            txt_av = f"**H0 Á-V:** {h0_av:.3f} m ({fuente_av})" if pd.notna(h0_av) else "**H0 Á-V:** N/A"
+
+            cols_h0[0].info(txt_man)
+            cols_h0[1].warning(txt_ste)
+            cols_h0[2].success(txt_av)
             
             formato_caudal = lambda x: f"{x:.2f}" if pd.notna(x) else "-"
             
@@ -2729,7 +3285,6 @@ with tab7:
                 "H (m)": "{:.3f}", "Q_man (m³/s)": formato_caudal, "Q_ste (m³/s)": formato_caudal, "Q_av (m³/s)": formato_caudal
             }), use_container_width=True, hide_index=True)
 
-            # --- NUEVO: SELECCIÓN OFICIAL Y EXPORTACIÓN ---
             st.markdown("---")
             st.subheader("🏆 Selección de Curva Definitiva")
             
@@ -2738,39 +3293,33 @@ with tab7:
                 metodo_definitivo = st.radio(
                     "Con base en el error visual y numérico, selecciona el método que conformará tu Curva de Gasto Oficial:",
                     options=["Manning", "Stevens", "Área-Velocidad"],
-                    horizontal=True
+                    horizontal=True, key="Curva_selec"
                 )
-                # Guardar selección en sesión
                 st.session_state.metodo_definitivo = metodo_definitivo
             
             with col_desc:
-                # Mapeo de columnas según selección
                 col_map = {
                     "Manning": "Q_man (m³/s)",
                     "Stevens": "Q_ste (m³/s)",
                     "Área-Velocidad": "Q_av (m³/s)"
                 }
                 
-                # Preparar DataFrame final
-                df_export = df_comp.copy()
+                df_export = df_comp.drop(columns=["Nota"]).copy()
                 df_export.insert(1, "Q_Definitivo (m³/s)", df_export[col_map[metodo_definitivo]])
-                
-                # Redondear valores para un CSV limpio
                 df_export = df_export.round({"H (m)": 3, "Q_Definitivo (m³/s)": 3, "Q_man (m³/s)": 3, "Q_ste (m³/s)": 3, "Q_av (m³/s)": 3})
                 csv_export = df_export.to_csv(index=False).encode('utf-8')
                 
-                st.write("") # Espaciador
+                st.write("") 
                 st.download_button(
                     label=f"💾 Exportar Curva {metodo_definitivo} (CSV)",
                     data=csv_export,
-                    file_name=f"Curva_Gasto_Definitiva_{metodo_definitivo}.csv",
+                    file_name=f"Curva_Gasto_Definitiva_{metodo_definitivo}.csv", 
                     mime="text/csv",
                     type="primary",
                     use_container_width=True
                 )
             st.caption(f"El archivo exportado incluirá una columna maestra llamada **Q_Definitivo** basada en el método de {metodo_definitivo}, manteniendo las demás como referencia.")
 
-            # Expander con tabla de aforos
             with st.expander("Ver aforos utilizados"):
                 if df_aforos_comp is not None and not df_aforos_comp.empty:
                     cols_aforo = ["NO.", "FECHA", "H_m", "CAUDAL TOTAL (m3/s)", "ÁREA SEC. (m2)", "VELOC. MEDIA (m/s)"]
@@ -2798,7 +3347,7 @@ with tab8:
             if st.session_state.get('perfil_data') and st.session_state.perfil_data.get('codigo'):
                 codigo_default = str(st.session_state.perfil_data['codigo']).strip()
                 
-            codigo_estacion = st.text_input("Etiqueta_Estacion a filtrar:", value=codigo_default)
+            codigo_estacion = st.text_input("Etiqueta_Estacion a filtrar:",value=st.session_state.get('codigo_estacion', ''))
         
         if codigo_estacion:
             # Asegurar que ambos lados sean texto para una comparación exacta
@@ -2872,7 +3421,7 @@ with tab8:
                             Q_act = Q_act[mask_validos]
                             
                         # --- NUEVO: BANDA DEL 80% ---
-                        factor_banda = 0.80 # 80% de amplitud
+                        factor_banda = st.session_state.banda_error_global / 100.0
                         Q_sup = Q_act * (1 + factor_banda)
                         Q_inf = np.maximum(Q_act * (1 - factor_banda), 0)
                         
@@ -2892,7 +3441,7 @@ with tab8:
                             fill='tonextx', 
                             fillcolor='rgba(255, 51, 51, 0.15)', # Rojo muy suave y transparente
                             line=dict(width=0),
-                            name='Banda ±80%',
+                            name=f'Banda ±{st.session_state.banda_error_global}%',
                             hoverinfo='skip'
                         ))
                         
