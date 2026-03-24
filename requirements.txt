@@ -3,7 +3,5 @@ pandas
 numpy
 plotly
 scipy
-pickle
-datetime
 openpyxl
 xlrd
