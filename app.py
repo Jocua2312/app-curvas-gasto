@@ -11,6 +11,7 @@ from scipy.interpolate import interp1d
 import pickle
 import datetime
 import warnings
+import io
 warnings.filterwarnings('ignore')
 
 # Configuración de página a pantalla completa
@@ -1864,7 +1865,7 @@ with tab4:
             st.session_state.stevens_edited_df = default_df_s
 
         if 'opts_modelos_stevens' not in st.session_state:
-            st.session_state.opts_modelos_stevens = {"lineal": False, "exp": False, "log": False, "pot": False}
+            st.session_state.opts_modelos_stevens = {"lineal": True, "exp": True, "log": True, "pot": True}
 
         if 'banda_error_global' not in st.session_state:
             st.session_state.banda_error_global = 15.0
@@ -2433,7 +2434,7 @@ with tab5:
             st.session_state.av_edited_df = default_df_av
 
         if 'opts_modelos_av' not in st.session_state:
-            st.session_state.opts_modelos_av = {"lineal": False, "exp": False, "log": False, "pot": False}
+            st.session_state.opts_modelos_av = {"lineal": True, "exp": True, "log": True, "pot": True}
 
         if 'banda_error_global' not in st.session_state:
             st.session_state.banda_error_global = 15.0
@@ -3273,6 +3274,77 @@ with tab7:
                     df_af_mostrar = df_aforos_comp[cols_existentes].copy()
                     df_af_mostrar = df_af_mostrar.rename(columns={"H_m": "H (m)", "CAUDAL TOTAL (m3/s)": "Q (m³/s)"})
                     st.dataframe(df_af_mostrar, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.subheader("💾 Exportar Resultados Completos")
+    st.markdown("Descarga un archivo Excel con todas las tablas calculadas: geometría, variables de los aforos y las curvas de gasto extrapoladas de los 3 métodos.")
+
+    # Función para empaquetar todo en un Excel en memoria
+    def generar_excel_exportacion():
+        output = io.BytesIO()
+        # Usamos xlsxwriter como motor para crear el archivo Excel
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            
+            # 1. Exportar Geometría
+            if st.session_state.get('df_geo') is not None:
+                st.session_state.df_geo.to_excel(writer, sheet_name='Geometria', index=False)
+            
+            # 2. Exportar Manning
+            if st.session_state.get('manning_data') is not None:
+                st.session_state.manning_data.to_excel(writer, sheet_name='Manning_Aforos', index=False)
+            if st.session_state.get('manning_curve') is not None:
+                st.session_state.manning_curve.to_excel(writer, sheet_name='Manning_Curva', index=False)
+            
+            # 3. Exportar Stevens
+            if st.session_state.get('stevens_data') is not None:
+                st.session_state.stevens_data.to_excel(writer, sheet_name='Stevens_Aforos', index=False)
+            if st.session_state.get('stevens_curve') is not None:
+                st.session_state.stevens_curve.to_excel(writer, sheet_name='Stevens_Curva', index=False)
+            
+            # 4. Exportar Área-Velocidad
+            if st.session_state.get('av_data') is not None:
+                st.session_state.av_data.to_excel(writer, sheet_name='AreaVelocidad_Aforos', index=False)
+            if st.session_state.get('av_curve') is not None:
+                st.session_state.av_curve.to_excel(writer, sheet_name='AreaVelocidad_Curva', index=False)
+            
+            # 5. Hoja Resumen de Errores
+            resumen_errores = pd.DataFrame({
+                "Método": ["Manning", "Stevens", "Área-Velocidad"],
+                "MAPE Promedio (%)": [
+                    st.session_state.get('manning_error'),
+                    st.session_state.get('stevens_error'),
+                    st.session_state.get('av_error')
+                ],
+                "Error de Procedimiento σq (%)": [
+                    st.session_state.get('manning_error_sigma'),
+                    st.session_state.get('stevens_error_sigma'),
+                    st.session_state.get('av_error_sigma')
+                ]
+            })
+            resumen_errores.to_excel(writer, sheet_name='Resumen_Errores', index=False)
+
+        return output.getvalue()
+
+    # Mostrar el botón solo si al menos hay datos procesados (ej. Geometría)
+    if st.session_state.get('df_geo') is not None:
+        excel_data = generar_excel_exportacion()
+        
+        # Generar nombre dinámico para el archivo Excel
+        estacion_nombre = "Estacion_Desconocida"
+        if st.session_state.get('perfil_data'):
+            estacion_nombre = str(st.session_state.perfil_data.get('estacion', 'Estacion')).replace(" ", "_")
+        fecha_hoy = datetime.datetime.now().strftime("%Y%m%d")
+        
+        st.download_button(
+            label="📥 Descargar todos los cálculos a Excel (.xlsx)",
+            data=excel_data,
+            file_name=f"Calculos_Curva_{estacion_nombre}_{fecha_hoy}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+            use_container_width=True
+        )
+    else:
+        st.info("💡 Procesa los aforos y genera la geometría para habilitar la exportación de cálculos.")
 
 # ================== PESTAÑA 8: HISTÓRICO DE CURVAS ==================
 with tab8:
