@@ -489,7 +489,7 @@ with st.sidebar:
             'manning_error_sigma', 'stevens_error_sigma', 'av_error_sigma',
             'manning_edited_df', 'stevens_edited_df', 'av_edited_df',
             'temp_aforos_activos', 'temp_perfil_activos', 'perfil_puntos_activos',
-            'df_aforos_activos', 'h0_seleccionados', 'metodo_definitivo',"Curva_selec"
+            'df_aforos_activos', 'h0_seleccionados', 'metodo_definitivo',"Curva_selec", "usar_auto"
         ]
         for key in keys_to_reset:
             if key in st.session_state:
@@ -518,7 +518,7 @@ with st.sidebar.expander("💾 Guardar / Cargar Proyecto", expanded=False):
         'usar_auto','H_max_manual','banda_error_global', "Curva_selec", 
         'manning_h_quiebre', 'manning_modelo_inf', 'manning_modelo_sup',
         'stevens_h_quiebre', 'stevens_modelo_inf', 'stevens_modelo_sup',
-        'av_h_quiebre', 'av_modelo_inf', 'av_modelo_sup',
+        'av_h_quiebre', 'av_modelo_inf', 'av_modelo_sup', 'nivel_interes_1', 'nivel_interes_2',
         # Añade también las claves de los radios de H0 si decides mantenerlas
     ]
     
@@ -646,7 +646,6 @@ with tab1:
         df = st.session_state.df_aforos.copy()
 
         # 2. Inicializar estado temporal o RESETEARLO si se subió un archivo nuevo
-        # Comparamos la longitud para saber si el usuario cargó un análisis nuevo
         if 'temp_aforos_activos' not in st.session_state or 'last_df_size' not in st.session_state or st.session_state.last_df_size != len(df):
             st.session_state.temp_aforos_activos = df.copy()
             st.session_state.last_df_size = len(df)
@@ -655,7 +654,6 @@ with tab1:
         col_fecha = next((col for col in df.columns if "FECHA" in str(col).upper()), None)
 
         if col_fecha:
-            # Asegurar formato fecha
             df[col_fecha] = pd.to_datetime(df[col_fecha], errors='coerce', dayfirst=True)
             st.session_state.temp_aforos_activos[col_fecha] = pd.to_datetime(
                 st.session_state.temp_aforos_activos[col_fecha], errors='coerce', dayfirst=True
@@ -670,19 +668,16 @@ with tab1:
                 
                 with st.container():
                     col_f1, col_f2 = st.columns(2)
-                    # Inicializamos las variables en la memoria SOLO si no existen (ej. la primera vez que entras)
                     if "fecha_inicio" not in st.session_state:
                         st.session_state.fecha_inicio = min_date
                     if "fecha_fin" not in st.session_state:
                         st.session_state.fecha_fin = max_date
 
                     with col_f1:
-                        # Quitamos el segundo argumento (el valor por defecto) y dejamos solo min/max y el key
                         f_inicio = st.date_input("Fecha Inicio:", min_value=min_date, max_value=max_date, key="fecha_inicio")
                     with col_f2:
                         f_fin = st.date_input("Fecha Fin:", min_value=min_date, max_value=max_date, key="fecha_fin")
 
-                # Aplicar filtro de fechas al DataFrame temporal (para visualización)
                 if f_inicio > f_fin:
                     st.error("⚠️ La fecha de inicio no puede ser mayor a la fecha de fin.")
                     df_mostrar_temp = st.session_state.temp_aforos_activos
@@ -698,47 +693,39 @@ with tab1:
 
         st.caption("Selecciona o desmarca en la columna 'Activo' los aforos que deseas usar en los cálculos de los modelos.")
 
-        # 4. Editor interactivo de Aforos (sobre el DataFrame temporal)
+        # --- AQUÍ EMPIEZA LA MAGIA DEL FORMULARIO PARA AFOROS ---
         columnas_protegidas = [col for col in df_mostrar_temp.columns if col != "Activo"]
         
-        edited_temp = st.data_editor(
-            df_mostrar_temp,
-            column_config={
-                "Activo": st.column_config.CheckboxColumn("Activo", default=True),
-                col_fecha: st.column_config.DateColumn("Fecha", format="DD/MM/YYYY") if col_fecha else None
-            },
-            disabled=columnas_protegidas,
-            hide_index=True,
-            use_container_width=True,
-            key="editor_aforos_temp"
-        )
+        with st.form("form_edicion_aforos"):
+            # 4. Editor interactivo dentro del formulario (no recarga al hacer clic)
+            edited_temp = st.data_editor(
+                df_mostrar_temp,
+                column_config={
+                    "Activo": st.column_config.CheckboxColumn("Activo", default=True),
+                    col_fecha: st.column_config.DateColumn("Fecha", format="DD/MM/YYYY") if col_fecha else None
+                },
+                disabled=columnas_protegidas,
+                hide_index=True,
+                use_container_width=True,
+                key="editor_aforos_temp"
+            )
 
-        # Actualizar el DataFrame temporal con las ediciones (sin rerun aún)
-        st.session_state.temp_aforos_activos.update(edited_temp)
-
-# 5. Botones de acción
-        col_apply, col_cancel = st.columns(2)
-        with col_apply:
-            if st.button("✅ Aplicar cambios en aforos", use_container_width=True):
-                
-                # LA MAGIA ESTÁ AQUÍ:
-                # Sacamos los aforos activos DIRECTAMENTE de 'edited_temp', 
-                # que es la tabla que ya tiene el filtro de fechas aplicado.
+            # 5. Botones de acción dentro del formulario
+            col_apply, col_cancel = st.columns(2)
+            with col_apply:
+                # Al presionar este botón, Streamlit procesa todos los clics acumulados
+                aplicar_aforos = st.form_submit_button("✅ Aplicar cambios en aforos", use_container_width=True)
+            
+            if aplicar_aforos:
+                st.session_state.temp_aforos_activos.update(edited_temp)
                 aforos_para_modelos = edited_temp[edited_temp['Activo'] == True].copy()
-                
-                # Los guardamos como los aforos oficiales para todas las pestañas
                 st.session_state.df_aforos_activos = aforos_para_modelos
-                
-                # Actualizamos el DataFrame global original solo por consistencia (opcional)
                 st.session_state.df_aforos.update(aforos_para_modelos[['Activo']])
-                
-                # ---> SEÑAL PARA QUE MANNING SE ACTUALICE <---
                 st.session_state.flag_actualizar_modelos = True
                 
-                st.success("Cambios aplicados. Solo se usarán los aforos del rango de fechas seleccionado.")
+                st.success("Cambios aplicados. Solo se usarán los aforos seleccionados.")
 
-        # --- CORRECCIÓN DEL RESUMEN VISUAL ---
-        # Ahora lee directamente de 'edited_temp' que es el dataframe ya filtrado por el calendario
+        # Resumen Visual
         activos_visibles = len(edited_temp[edited_temp['Activo'] == True])
         totales_visibles = len(edited_temp)
         totales_absolutos = len(st.session_state.df_aforos)
@@ -753,7 +740,6 @@ with tab1:
 
     if st.session_state.perfil_data is not None:
         p_data = st.session_state.perfil_data
-        # Crear DataFrame con los puntos del perfil
         df_perfil_puntos = pd.DataFrame({
             'Abscisa (m)': p_data['abscisas'],
             'Cota (m)': p_data['cotas'],
@@ -761,44 +747,37 @@ with tab1:
             'Tabla': p_data['tablas']
         })
         
-        # Inicializar estado de selección temporal
         if 'temp_perfil_activos' not in st.session_state:
             st.session_state.temp_perfil_activos = [True] * len(df_perfil_puntos)
 
-        # Mostrar editor con checkboxes (usando el temporal)
         df_perfil_edit = df_perfil_puntos.copy()
         df_perfil_edit['Activo'] = st.session_state.temp_perfil_activos
 
-        edited_perfil = st.data_editor(
-            df_perfil_edit,
-            column_config={
-                "Activo": st.column_config.CheckboxColumn("Incluir", default=True),
-                "Abscisa (m)": st.column_config.NumberColumn("Abscisa", disabled=True, format="%.3f"),
-                "Cota (m)": st.column_config.NumberColumn("Cota", disabled=True, format="%.3f"),
-                "Descripción": st.column_config.TextColumn("Descripción", disabled=True),
-                "Tabla": st.column_config.TextColumn("Origen", disabled=True)
-            },
-            disabled=False,
-            hide_index=True,
-            use_container_width=True,
-            key="perfil_puntos_editor_temp"
-        )
+        # --- AQUÍ APLICAMOS EL MISMO FORMULARIO PARA EL PERFIL ---
+        with st.form("form_edicion_perfil"):
+            edited_perfil = st.data_editor(
+                df_perfil_edit,
+                column_config={
+                    "Activo": st.column_config.CheckboxColumn("Incluir", default=True),
+                    "Abscisa (m)": st.column_config.NumberColumn("Abscisa", disabled=True, format="%.3f"),
+                    "Cota (m)": st.column_config.NumberColumn("Cota", disabled=True, format="%.3f"),
+                    "Descripción": st.column_config.TextColumn("Descripción", disabled=True),
+                    "Tabla": st.column_config.TextColumn("Origen", disabled=True)
+                },
+                disabled=False,
+                hide_index=True,
+                use_container_width=True,
+                key="perfil_puntos_editor_temp"
+            )
 
-        # Actualizar temporal
-        st.session_state.temp_perfil_activos = edited_perfil['Activo'].tolist()
-
-        # Botones para perfil
-        col_apply_perf, col_cancel_perf = st.columns(2)
-        with col_apply_perf:
-            if st.button("✅ Aplicar cambios en perfil", use_container_width=True):
+            col_apply_perf, col_cancel_perf = st.columns(2)
+            with col_apply_perf:
+                aplicar_perfil = st.form_submit_button("✅ Aplicar cambios en perfil", use_container_width=True)
+            
+            if aplicar_perfil:
+                st.session_state.temp_perfil_activos = edited_perfil['Activo'].tolist()
                 st.session_state.perfil_puntos_activos = st.session_state.temp_perfil_activos.copy()
                 st.success("Cambios aplicados al perfil.")
-                st.rerun()
-        with col_cancel_perf:
-            if st.button("❌ Cancelar cambios en perfil", use_container_width=True):
-                # Restaurar temporal desde el global
-                st.session_state.temp_perfil_activos = st.session_state.perfil_puntos_activos.copy()
-                st.rerun()
 
         st.caption("Selecciona los puntos que deseas incluir en la geometría (los desactivados no se usarán en cálculos).")
     else:
@@ -1663,14 +1642,15 @@ with tab3:
             # --- Fila de guardado y métricas ---
             col_guardar, col_mape, col_sigma = st.columns([1, 1, 1])
             with col_guardar:
-                if st.button("💾 Guardar curva", key="guardar_manning"):
-                    if len(H_fino) > 0 and len(Q_suave) > 0 and np.isfinite(Q_suave).any():
-                        st.session_state.manning_curve = pd.DataFrame({"H": H_fino, "Q": Q_suave})
-                        st.session_state.manning_error = prom_mape
-                        st.session_state.manning_error_sigma = prom_sigma
-                        st.success("Curva guardada en la sesión.")
-                    else:
-                        st.error("No hay curva válida")
+                # --- AUTO-GUARDADO SILENCIOSO ---
+                # (Se eliminó el if st.button para que guarde automáticamente)
+                if len(H_fino) > 0 and len(Q_suave) > 0 and np.isfinite(Q_suave).any():
+                    st.session_state.manning_curve = pd.DataFrame({"H": H_fino, "Q": Q_suave})
+                    st.session_state.manning_error = prom_mape
+                    st.session_state.manning_error_sigma = prom_sigma
+                    st.success("✅ Auto-guardado: Curva en memoria")
+                else:
+                    st.error("No hay curva válida para guardar")
                 
                 # --- LA MAGIA DE LA RESTAURACIÓN ---
                 if "manning_curve" in st.session_state and st.session_state.manning_curve is not None:
@@ -2273,15 +2253,16 @@ with tab4:
 
             # --- Fila de guardado y métricas ---
             col_guardar_s, col_mape_s, col_sigma_s = st.columns([1, 1, 1])
+                
             with col_guardar_s:
-                if st.button("💾 Guardar curva", key="guardar_stevens"):
-                    if len(H_fino_s) > 0 and len(Q_suave_s) > 0 and np.isfinite(Q_suave_s).any():
-                        st.session_state.stevens_curve = pd.DataFrame({"H": H_fino_s, "Q": Q_suave_s})
-                        st.session_state.stevens_error = prom_mape_s
-                        st.session_state.stevens_error_sigma = prom_sigma_s
-                        st.success("Curva guardada en la sesión.")
-                    else:
-                        st.error("No hay curva válida")
+                # --- AUTO-GUARDADO SILENCIOSO ---
+                if len(H_fino_s) > 0 and len(Q_suave_s) > 0 and np.isfinite(Q_suave_s).any():
+                    st.session_state.stevens_curve = pd.DataFrame({"H": H_fino_s, "Q": Q_suave_s})
+                    st.session_state.stevens_error = prom_mape_s
+                    st.session_state.stevens_error_sigma = prom_sigma_s
+                    st.success("✅ Auto-guardado: Curva en memoria")
+                else:
+                    st.error("No hay curva válida para guardar")
                 
                 # --- LA MAGIA DE LA RESTAURACIÓN ---
                 if "stevens_curve" in st.session_state and st.session_state.stevens_curve is not None:
@@ -2800,15 +2781,16 @@ with tab5:
 
             # --- Fila de guardado y métricas ---
             col_guardar_av, col_mape_av, col_sigma_av = st.columns([1, 1, 1])
+
             with col_guardar_av:
-                if st.button("💾 Guardar curva", key="guardar_av"):
-                    if len(H_fino_av) > 0 and len(Q_suave_av) > 0 and np.isfinite(Q_suave_av).any():
-                        st.session_state.av_curve = pd.DataFrame({"H": H_fino_av, "Q": Q_suave_av})
-                        st.session_state.av_error = prom_mape_av
-                        st.session_state.av_error_sigma = prom_sigma_av
-                        st.success("Curva guardada en la sesión.")
-                    else:
-                        st.error("No hay curva válida")
+                # --- AUTO-GUARDADO SILENCIOSO ---
+                if len(H_fino_av) > 0 and len(Q_suave_av) > 0 and np.isfinite(Q_suave_av).any():
+                    st.session_state.av_curve = pd.DataFrame({"H": H_fino_av, "Q": Q_suave_av})
+                    st.session_state.av_error = prom_mape_av
+                    st.session_state.av_error_sigma = prom_sigma_av
+                    st.success("✅ Auto-guardado: Curva en memoria")
+                else:
+                    st.error("No hay curva válida para guardar")
                 
                 if "av_curve" in st.session_state and st.session_state.av_curve is not None:
                     st.success("✅ Curva definitiva cargada en memoria")
@@ -3010,12 +2992,11 @@ with tab6:
                 if not row["_john_negativo"] and john_val is not None:
                     opciones.append("Johnson")
                     valores_opciones.append(john_val)
-
                 if len(opciones) == 0:
-                    st.warning(f"⚠️ Para {metodo}, ambos dan H0 negativo. Se usará H0 = 0.")
-                    st.session_state.h0_seleccionados[metodo] = 0.0
-                    st.session_state.h0_fuentes[metodo] = "Forzado (0)" # NUEVO
-                    st.caption(f"**{metodo}:** H0 = 0 (forzado)")
+                    st.warning(f"⚠️ Para {metodo}, ambos dan H0 negativo. No se forzará la curva.")
+                    st.session_state.h0_seleccionados[metodo] = np.nan
+                    st.session_state.h0_fuentes[metodo] = "No aplicado" 
+                    st.caption(f"**{metodo}:** Curva original (sin H0)")
                 else:
                     if len(opciones) == 1:
                         st.session_state.h0_seleccionados[metodo] = valores_opciones[0]
@@ -3091,15 +3072,15 @@ with tab7:
             
             # Obtener los H0 y sus fuentes
             h0_dict = st.session_state.get('h0_seleccionados', {})
-            h0_fuentes = st.session_state.get('h0_fuentes', {}) # NUEVO
-            
+            h0_fuentes = st.session_state.get('h0_fuentes', {}) 
+
             h0_man = h0_dict.get('Manning', None)
             h0_ste = h0_dict.get('Stevens', None)
             h0_av = h0_dict.get('Área-Velocidad', None)
             
-            fuente_man = h0_fuentes.get('Manning', '') # NUEVO
-            fuente_ste = h0_fuentes.get('Stevens', '') # NUEVO
-            fuente_av = h0_fuentes.get('Área-Velocidad', '') # NUEVO
+            fuente_man = h0_fuentes.get('Manning', '') 
+            fuente_ste = h0_fuentes.get('Stevens', '') 
+            fuente_av = h0_fuentes.get('Área-Velocidad', '') 
 
             if 'df_aforos_activos' in st.session_state:
                 df_aforos_comp = st.session_state.df_aforos_activos
@@ -3150,11 +3131,18 @@ with tab7:
             h_min_sug = df_aforos_comp["H_m"].quantile(0.25) if not df_aforos_comp.empty else H_niveles_base[0]
             h_max_sug = df_aforos_comp["H_m"].quantile(0.75) if not df_aforos_comp.empty else H_niveles_base[-1]
 
+            # Inicializar en la sesión solo si no existen previamente (así respeta lo que cargues del .pkl)
+            if "nivel_interes_1" not in st.session_state:
+                st.session_state.nivel_interes_1 = float(h_min_sug)
+            if "nivel_interes_2" not in st.session_state:
+                st.session_state.nivel_interes_2 = float(h_max_sug)
+
             col_p1, col_p2 = st.columns(2)
             with col_p1:
-                nivel_interes_1 = st.number_input("Nivel 1 (Aguas bajas/P25):", value=float(h_min_sug), step=0.1, format="%.3f")
+                # Quitamos el 'value' y ponemos el 'key' para que Streamlit lo maneje automáticamente
+                nivel_interes_1 = st.number_input("Nivel 1 (Aguas bajas/P25):", step=0.1, format="%.3f", key="nivel_interes_1")
             with col_p2:
-                nivel_interes_2 = st.number_input("Nivel 2 (Aguas altas/P75):", value=float(h_max_sug), step=0.1, format="%.3f")
+                nivel_interes_2 = st.number_input("Nivel 2 (Aguas altas/P75):", step=0.1, format="%.3f", key="nivel_interes_2")
 
             st.markdown("---")
             col1, col2, col3 = st.columns(3)
@@ -3349,147 +3337,176 @@ with tab7:
 # ================== PESTAÑA 8: HISTÓRICO DE CURVAS ==================
 with tab8:
     st.header("Comparación con el Histórico de Curvas")
-    st.markdown("Sube el archivo institucional con el histórico para comparar la nueva curva calculada.")
+    st.markdown("Sube el archivo institucional con el histórico para comparar la nueva curva calculada. **(Recomendado: usar formato .parquet o .pkl para mayor velocidad)**")
 
-    # 1. Cargar el archivo Excel
-    archivo_historico = st.file_uploader("Sube el archivo Excel (.xlsx, .xls)", type=["xlsx", "xls"], key="file_hist")
+    # 1. Cargar el archivo (AHORA ACEPTA MULTIPLES FORMATOS)
+    archivo_historico = st.file_uploader(
+        "Sube el archivo histórico (.xlsx, .xls, .parquet, .pkl, .csv)", 
+        type=["xlsx", "xls", "parquet", "pkl", "csv"], 
+        key="file_hist"
+    )
     
     if archivo_historico is not None:
-        # Cargar usando la función en caché
-        df_hist_full = cargar_historico_excel(archivo_historico)
-        
-        col_est, col_empty = st.columns([1, 2])
-        with col_est:
-            # --- NUEVO: Extraer código de la estación automáticamente ---
-            codigo_default = ""
-            if st.session_state.get('perfil_data') and st.session_state.perfil_data.get('codigo'):
-                codigo_default = str(st.session_state.perfil_data['codigo']).strip()
-                
-            codigo_estacion = st.text_input("Etiqueta_Estacion a filtrar:",value=st.session_state.get('codigo_estacion', ''))
-        
-        if codigo_estacion:
-            # Asegurar que ambos lados sean texto para una comparación exacta
-            df_hist_full['Etiqueta_Estacion'] = df_hist_full['Etiqueta_Estacion'].astype(str)
-            df_estacion = df_hist_full[df_hist_full['Etiqueta_Estacion'] == codigo_estacion].copy()
+            # Detectar el tipo de archivo y cargarlo
+            nombre_archivo = archivo_historico.name.lower()
             
-            if df_estacion.empty:
-                st.warning(f"No se encontraron datos históricos para la estación {codigo_estacion}.")
-            else:
-                st.success(f"✅ Se encontraron {len(df_estacion)} registros para la estación {codigo_estacion}.")
-                
-                # 3. Conversión de unidades (Nivel de cm a metros)
-                if 'Nivel' in df_estacion.columns:
-                    df_estacion['Nivel_m'] = df_estacion['Nivel'] / 100.0
+            try:
+                if nombre_archivo.endswith('.parquet'):
+                    df_hist_full = pd.read_parquet(archivo_historico)
+                elif nombre_archivo.endswith('.pkl'):
+                    df_hist_full = pd.read_pickle(archivo_historico)
+                elif nombre_archivo.endswith('.csv'):
+                    df_hist_full = pd.read_csv(archivo_historico, sep=None, engine='python', decimal=',', encoding='utf-8-sig')
                 else:
-                    st.error("El archivo no tiene la columna 'Nivel'. Verifica la estructura del Excel.")
-                    st.stop()
+                    df_hist_full = cargar_historico_excel(archivo_historico)
                     
-                # 4. Gráfica Comparativa
-                fig_hist = go.Figure()
+                # Limpiar espacios extra
+                df_hist_full.columns = df_hist_full.columns.str.strip()
                 
-                # Agrupar por Curva_id para trazar cada curva histórica como una línea distinta
-                if 'Curva_id' in df_estacion.columns:
-                    curvas_historicas = df_estacion.groupby('Curva_id')
+                # 🛑 RADAR DE DEBUG (Si no encuentra la columna, nos mostrará por qué)
+                if 'Etiqueta_Estacion' not in df_hist_full.columns:
+                    st.error("❌ No se encontró la columna 'Etiqueta_Estacion'.")
+                    st.warning("Pandas detectó que tu archivo tiene ESTAS columnas:")
+                    st.write(df_hist_full.columns.tolist())
+                    st.stop() # Detiene la app aquí, evitando el "KeyError" rojo y feo
                     
-                    for curva_id, datos_curva in curvas_historicas:
-                        # Ordenar por nivel para que la línea no se cruce
-                        datos_curva = datos_curva.sort_values(by='Nivel_m')
-                        
-                        # Extraer el año de inicio para la leyenda (si existe)
-                        fecha_inicio = datos_curva['Fecha_Inicio'].iloc[0] if 'Fecha_Inicio' in datos_curva.columns else None
-                        anio_str = f" ({str(fecha_inicio)[:4]})" if pd.notna(fecha_inicio) else ""
-                        
-                        fig_hist.add_trace(go.Scatter(
-                            x=datos_curva['Caudal'],
-                            y=datos_curva['Nivel_m'],
-                            mode='lines+markers',
-                            name=f'Histórica ID: {curva_id}{anio_str}',
-                            line=dict(dash='dash', width=2), # Líneas punteadas para el histórico
-                            marker=dict(size=5)
-                        ))
-                
-                # 5. Agregar la Curva Definitiva Actual
-                metodo_def = st.session_state.get('metodo_definitivo', None)
-                
-                if metodo_def is not None:
-                    # Mapear la selección al dataframe guardado en la Pestaña 7
-                    curvas_map = {
-                        "Manning": st.session_state.get("manning_curve"),
-                        "Stevens": st.session_state.get("stevens_curve"),
-                        "Área-Velocidad": st.session_state.get("av_curve")
-                    }
-                    df_curva_act = curvas_map.get(metodo_def)
+            except Exception as e:
+                st.error(f"Error al leer el archivo: {e}")
+                st.stop()
+            
+            col_est, col_empty = st.columns([1, 2])
+            with col_est:
+                # --- NUEVO: Extraer código de la estación automáticamente ---
+                codigo_default = ""
+                if st.session_state.get('perfil_data') and st.session_state.perfil_data.get('codigo'):
+                    codigo_default = str(st.session_state.perfil_data['codigo']).strip()
                     
-                    if df_curva_act is not None and not df_curva_act.empty:
-                        # Obtener H0 si existe para aplicar el límite visual
-                        h0_dict = st.session_state.get('h0_seleccionados', {})
-                        h0_val = h0_dict.get(metodo_def, None)
+                # Se usa codigo_default si no hay nada en session_state
+                valor_input = st.session_state.get('codigo_estacion', codigo_default)
+                codigo_estacion = st.text_input("Etiqueta_Estacion a filtrar:", value=valor_input)
+            
+            if codigo_estacion:
+                # Asegurar que ambos lados sean texto para una comparación exacta
+                df_hist_full['Etiqueta_Estacion'] = df_hist_full['Etiqueta_Estacion'].astype(str)
+                df_estacion = df_hist_full[df_hist_full['Etiqueta_Estacion'] == codigo_estacion].copy()
+                
+                if df_estacion.empty:
+                    st.warning(f"No se encontraron datos históricos para la estación {codigo_estacion}.")
+                else:
+                    st.success(f"✅ Se encontraron {len(df_estacion)} registros para la estación {codigo_estacion}.")
+                    
+                    # 3. Conversión de unidades (Nivel de cm a metros)
+                    if 'Nivel' in df_estacion.columns:
+                        df_estacion['Nivel_m'] = df_estacion['Nivel'] / 100.0
+                    else:
+                        st.error("El archivo no tiene la columna 'Nivel'. Verifica la estructura de los datos.")
+                        st.stop()
                         
-                        H_act = df_curva_act['H'].values
-                        Q_act = df_curva_act['Q'].values
+                    # 4. Gráfica Comparativa
+                    fig_hist = go.Figure()
+                    
+                    # Agrupar por Curva_id para trazar cada curva histórica como una línea distinta
+                    if 'Curva_id' in df_estacion.columns:
+                        curvas_historicas = df_estacion.groupby('Curva_id')
                         
-                        # Filtrar datos válidos de la nueva curva
-                        mask_validos = Q_act >= 0
-                        if pd.notna(h0_val):
-                            mask_validos = mask_validos & (H_act > h0_val)
-                            H_act = np.insert(H_act[mask_validos], 0, h0_val)
-                            Q_act = np.insert(Q_act[mask_validos], 0, 0.0)
-                        else:
-                            H_act = H_act[mask_validos]
-                            Q_act = Q_act[mask_validos]
+                        for curva_id, datos_curva in curvas_historicas:
+                            # Ordenar por nivel para que la línea no se cruce
+                            datos_curva = datos_curva.sort_values(by='Nivel_m')
                             
-                        # --- NUEVO: BANDA DEL 80% ---
-                        factor_banda = st.session_state.banda_error_global / 100.0
-                        Q_sup = Q_act * (1 + factor_banda)
-                        Q_inf = np.maximum(Q_act * (1 - factor_banda), 0)
-                        
-                        # Traza del límite inferior (Invisible)
-                        fig_hist.add_trace(go.Scatter(
-                            x=Q_inf, y=H_act,
-                            mode='lines',
-                            line=dict(width=0),
-                            showlegend=False,
-                            hoverinfo='skip'
-                        ))
-                        
-                        # Traza del límite superior (Rellena horizontalmente hasta el inferior)
-                        fig_hist.add_trace(go.Scatter(
-                            x=Q_sup, y=H_act,
-                            mode='lines',
-                            fill='tonextx', 
-                            fillcolor='rgba(255, 51, 51, 0.15)', # Rojo muy suave y transparente
-                            line=dict(width=0),
-                            name=f'Banda ±{st.session_state.banda_error_global}%',
-                            hoverinfo='skip'
-                        ))
-                        
-                        # Trazar por último la línea maestra para que destaque encima del color
-                        fig_hist.add_trace(go.Scatter(
-                            x=Q_act,
-                            y=H_act,
-                            mode='lines',
-                            name=f'⭐ NUEVA ({metodo_def})',
-                            line=dict(color='#ff3333', width=5) # Línea gruesa roja
-                        ))
-                else:
-                    st.info("💡 Ve a la pestaña 'Comparación' y selecciona tu método definitivo para que aparezca en esta gráfica.")
-
-                # Formato de la gráfica (Cambié hovermode a 'y unified' para que sea más fácil comparar a la misma altura)
-                fig_hist.update_layout(
-                    title=f"Evolución Histórica de Curvas de Gasto - Estación {codigo_estacion}",
-                    xaxis_title="Caudal Q (m³/s)",
-                    yaxis_title="Nivel H (m)",
-                    hovermode="y unified", 
-                    legend=dict(title="Curvas", orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    font=dict(color='white')
-                )
-                
-                st.plotly_chart(fig_hist, use_container_width=True)
-                
-                # 6. Tabla de datos visual para referencia
-                with st.expander("📊 Ver matriz de datos históricos (Filtrada)"):
-                    columnas_mostrar = [c for c in ['Curva_id', 'Fecha_Inicio', 'Fecha_Final', 'Nivel', 'Nivel_m', 'Caudal'] if c in df_estacion.columns]
-                    st.dataframe(df_estacion[columnas_mostrar].reset_index(drop=True), use_container_width=True)
+                            # Extraer el año de inicio para la leyenda (si existe)
+                            fecha_inicio = datos_curva['Fecha_Inicio'].iloc[0] if 'Fecha_Inicio' in datos_curva.columns else None
+                            anio_str = f" ({str(fecha_inicio)[:4]})" if pd.notna(fecha_inicio) else ""
+                            
+                            fig_hist.add_trace(go.Scatter(
+                                x=datos_curva['Caudal'],
+                                y=datos_curva['Nivel_m'],
+                                mode='lines+markers',
+                                name=f'Histórica ID: {curva_id}{anio_str}',
+                                line=dict(dash='dash', width=2), # Líneas punteadas para el histórico
+                                marker=dict(size=5)
+                            ))
                     
+                    # 5. Agregar la Curva Definitiva Actual
+                    metodo_def = st.session_state.get('metodo_definitivo', None)
+                    
+                    if metodo_def is not None:
+                        # Mapear la selección al dataframe guardado en la Pestaña 7
+                        curvas_map = {
+                            "Manning": st.session_state.get("manning_curve"),
+                            "Stevens": st.session_state.get("stevens_curve"),
+                            "Área-Velocidad": st.session_state.get("av_curve")
+                        }
+                        df_curva_act = curvas_map.get(metodo_def)
+                        
+                        if df_curva_act is not None and not df_curva_act.empty:
+                            # Obtener H0 si existe para aplicar el límite visual
+                            h0_dict = st.session_state.get('h0_seleccionados', {})
+                            h0_val = h0_dict.get(metodo_def, None)
+                            
+                            H_act = df_curva_act['H'].values
+                            Q_act = df_curva_act['Q'].values
+                            
+                            # Filtrar datos válidos de la nueva curva
+                            mask_validos = Q_act >= 0
+                            if pd.notna(h0_val):
+                                mask_validos = mask_validos & (H_act > h0_val)
+                                H_act = np.insert(H_act[mask_validos], 0, h0_val)
+                                Q_act = np.insert(Q_act[mask_validos], 0, 0.0)
+                            else:
+                                H_act = H_act[mask_validos]
+                                Q_act = Q_act[mask_validos]
+                                
+                            # --- NUEVO: BANDA DEL 80% ---
+                            factor_banda = st.session_state.banda_error_global / 100.0
+                            Q_sup = Q_act * (1 + factor_banda)
+                            Q_inf = np.maximum(Q_act * (1 - factor_banda), 0)
+                            
+                            # Traza del límite inferior (Invisible)
+                            fig_hist.add_trace(go.Scatter(
+                                x=Q_inf, y=H_act,
+                                mode='lines',
+                                line=dict(width=0),
+                                showlegend=False,
+                                hoverinfo='skip'
+                            ))
+                            
+                            # Traza del límite superior (Rellena horizontalmente hasta el inferior)
+                            fig_hist.add_trace(go.Scatter(
+                                x=Q_sup, y=H_act,
+                                mode='lines',
+                                fill='tonextx', 
+                                fillcolor='rgba(255, 51, 51, 0.15)', # Rojo muy suave y transparente
+                                line=dict(width=0),
+                                name=f'Banda ±{st.session_state.banda_error_global}%',
+                                hoverinfo='skip'
+                            ))
+                            
+                            # Trazar por último la línea maestra para que destaque encima del color
+                            fig_hist.add_trace(go.Scatter(
+                                x=Q_act,
+                                y=H_act,
+                                mode='lines',
+                                name=f'⭐ NUEVA ({metodo_def})',
+                                line=dict(color='#ff3333', width=5) # Línea gruesa roja
+                            ))
+                    else:
+                        st.info("💡 Ve a la pestaña 'Comparación' y selecciona tu método definitivo para que aparezca en esta gráfica.")
+
+                    # Formato de la gráfica
+                    fig_hist.update_layout(
+                        title=f"Evolución Histórica de Curvas de Gasto - Estación {codigo_estacion}",
+                        xaxis_title="Caudal Q (m³/s)",
+                        yaxis_title="Nivel H (m)",
+                        hovermode="y unified", 
+                        legend=dict(title="Curvas", orientation="v", yanchor="top", y=1, xanchor="left", x=1.02),
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        font=dict(color='white')
+                    )
+                    
+                    st.plotly_chart(fig_hist, use_container_width=True)
+                    
+                    # 6. Tabla de datos visual para referencia
+                    with st.expander("📊 Ver matriz de datos históricos (Filtrada)"):
+                        columnas_mostrar = [c for c in ['Curva_id', 'Fecha_Inicio', 'Fecha_Final', 'Nivel', 'Nivel_m', 'Caudal'] if c in df_estacion.columns]
+                        st.dataframe(df_estacion[columnas_mostrar].reset_index(drop=True), use_container_width=True)  
