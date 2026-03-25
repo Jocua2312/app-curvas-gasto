@@ -3,6 +3,7 @@ pandas
 numpy
 plotly
 scipy
-openpyxl
 xlsxwriter
 xlrd
+openpyxl
+pyarrow
