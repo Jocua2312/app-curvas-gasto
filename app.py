@@ -827,7 +827,7 @@ with tab2:
             abscisas_filt = p_data['abscisas']
             cotas_filt = p_data['cotas']
             desc_filt = p_data['descripciones']
-            st.warning("No hay selección de puntos activos. Usando todos los puntos del perfil.")
+            st.warning("No hay selección de puntos desactivos. Usando todos los puntos del perfil.")
         
         # Verificar que haya puntos activos
         if len(abscisas_filt) == 0:
@@ -1058,7 +1058,7 @@ with tab2:
             else:
                 H_min_aforos = H_min_calc
                 H_max_aforos = H_max_auto
-                st.warning("No hay aforos activos, se usará el rango completo con paso fino.")
+                st.warning("No hay aforos desactivos, se usará el rango completo con paso fino.")
         
         # --- BOTÓN CORREGIDO CON KEY ÚNICA ---
         if st.button("Generar Tabla de Geometría", key="btn_generar_tabla_geo"):
