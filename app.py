@@ -12,18 +12,7 @@ import pickle
 import datetime
 import warnings
 import io
-import logging
 warnings.filterwarnings('ignore')
-
-# Configurar logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
 
 # Configuración de página a pantalla completa
 st.set_page_config(page_title="Curva de Gasto", layout="wide")
