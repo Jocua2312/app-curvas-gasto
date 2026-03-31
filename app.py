@@ -12,7 +12,18 @@ import pickle
 import datetime
 import warnings
 import io
+import logging
 warnings.filterwarnings('ignore')
+
+# Configurar logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Configuración de página a pantalla completa
 st.set_page_config(page_title="Curva de Gasto", layout="wide")
@@ -3316,7 +3327,7 @@ with tab7:
                     use_container_width=True
                 )
             
-            st.caption(f"El archivo exportado contiene únicamente las columnas de Nivel (H) y Caudal (Q) basadas en el método de {metodo_definitivo}.")do_definitivo}, manteniendo las demás como referencia.")
+            st.caption(f"El archivo exportado contiene únicamente las columnas de Nivel (H) y Caudal (Q) basadas en el método de {metodo_definitivo}, manteniendo las demás como referencia.")
 
             with st.expander("Ver aforos utilizados"):
                 if df_aforos_comp is not None and not df_aforos_comp.empty:
