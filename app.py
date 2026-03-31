@@ -12,7 +12,18 @@ import pickle
 import datetime
 import warnings
 import io
+import logging
 warnings.filterwarnings('ignore')
+
+# Configurar logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Configuración de página a pantalla completa
 st.set_page_config(page_title="Curva de Gasto", layout="wide")
@@ -40,35 +51,6 @@ import numpy as np
 
 def _preparar_vectores(abscisas, cotas, cota_cero, nivel):
     """Función auxiliar para calcular intersecciones y máscaras de forma vectorizada"""
-    
-    # Validación de inputs
-    try:
-        # Convertir a numpy arrays si no lo son
-        abscisas = np.asarray(abscisas, dtype=float)
-        cotas = np.asarray(cotas, dtype=float)
-        cota_cero = float(cota_cero)
-        nivel = float(nivel)
-    except (ValueError, TypeError) as e:
-        logger.error(f"Error al convertir inputs a tipos numéricos: {e}")
-        return None
-    
-    # Validar que no estén vacíos
-    if len(abscisas) == 0 or len(cotas) == 0:
-        logger.warning("Arrays de abscisas o cotas están vacíos")
-        return None
-    
-    # Validar que tengan la misma longitud
-    if len(abscisas) != len(cotas):
-        logger.error(f"Longitudes no coinciden: abscisas={len(abscisas)}, cotas={len(cotas)}")
-        return None
-    
-    # Validar rangos físicos razonables
-    if not (-10000 <= cota_cero <= 10000):
-        logger.warning(f"Cota cero fuera de rango razonable: {cota_cero}")
-    
-    if not (-1000 <= nivel <= 1000):
-        logger.warning(f"Nivel fuera de rango razonable: {nivel}")
-    
     NA = cota_cero + nivel
     
     # Filtrar NaNs automáticamente
@@ -76,7 +58,6 @@ def _preparar_vectores(abscisas, cotas, cota_cero, nivel):
     x, y = abscisas[mask_valid], cotas[mask_valid]
     
     if len(x) < 2:
-        logger.debug(f"Puntos insuficientes después de filtrar NaNs: {len(x)}")
         return None
         
     x0, x1 = x[:-1], x[1:]
@@ -102,256 +83,104 @@ def _preparar_vectores(abscisas, cotas, cota_cero, nivel):
     return x0, x1, y0, y1, dx, dy, h0, h1, frac, m_ambos, m_baja, m_sube
 
 def area_mojada(abscisas, cotas, cota_cero, nivel, modo_muro="sin_friccion"):
-    """
-    Calcula el área mojada de la sección transversal.
+    datos = _preparar_vectores(abscisas, cotas, cota_cero, nivel)
+    if not datos: return 0.0
+    x0, x1, y0, y1, dx, dy, h0, h1, frac, m_ambos, m_baja, m_sube = datos
     
-    Args:
-        abscisas: Array de abscisas (eje horizontal)
-        cotas: Array de cotas (eje vertical)
-        cota_cero: Cota de referencia del nivel cero
-        nivel: Nivel del agua respecto a cota_cero
-        modo_muro: Modo de tratamiento de muros (sin_friccion por defecto)
+    area = np.zeros_like(dx)
+    # Trapecio completo (Funciona como muro vertical nativo si desborda)
+    area[m_ambos] = (h0[m_ambos] + h1[m_ambos]) * dx[m_ambos] / 2.0
+    # Triángulo izquierdo
+    area[m_baja] = h1[m_baja] * dx[m_baja] * (1 - frac[m_baja]) / 2.0
+    # Triángulo derecho
+    area[m_sube] = h0[m_sube] * dx[m_sube] * frac[m_sube] / 2.0
     
-    Returns:
-        float: Área mojada en m²
-    """
-    try:
-        datos = _preparar_vectores(abscisas, cotas, cota_cero, nivel)
-        if not datos:
-            logger.debug("No se pudo preparar vectores para área_mojada")
-            return 0.0
-        x0, x1, y0, y1, dx, dy, h0, h1, frac, m_ambos, m_baja, m_sube = datos
-        
-        area = np.zeros_like(dx)
-        # Trapecio completo (Funciona como muro vertical nativo si desborda)
-        area[m_ambos] = (h0[m_ambos] + h1[m_ambos]) * dx[m_ambos] / 2.0
-        # Triángulo izquierdo
-        area[m_baja] = h1[m_baja] * dx[m_baja] * (1 - frac[m_baja]) / 2.0
-        # Triángulo derecho
-        area[m_sube] = h0[m_sube] * dx[m_sube] * frac[m_sube] / 2.0
-        
-        resultado = float(np.sum(area))
-        
-        # Validar resultado
-        if resultado < 0:
-            logger.warning(f"Área negativa calculada: {resultado}, retornando 0")
-            return 0.0
-        if np.isnan(resultado) or np.isinf(resultado):
-            logger.error(f"Área inválida calculada: {resultado}")
-            return 0.0
-            
-        return resultado
-    except Exception as e:
-        logger.error(f"Error calculando área_mojada: {e}", exc_info=True)
-        return 0.0
+    return float(np.sum(area))
 
 def ancho_superficial(abscisas, cotas, cota_cero, nivel, modo_muro="sin_friccion"):
-    """
-    Calcula el ancho superficial de la sección transversal.
+    datos = _preparar_vectores(abscisas, cotas, cota_cero, nivel)
+    if not datos: return 0.0
+    x0, x1, y0, y1, dx, dy, h0, h1, frac, m_ambos, m_baja, m_sube = datos
     
-    Args:
-        abscisas: Array de abscisas (eje horizontal)
-        cotas: Array de cotas (eje vertical)
-        cota_cero: Cota de referencia del nivel cero
-        nivel: Nivel del agua respecto a cota_cero
-        modo_muro: Modo de tratamiento de muros (sin_friccion por defecto)
+    ancho = np.zeros_like(dx)
+    # Ancho completo (se tranca en el ancho máximo si desborda, actuando como muro)
+    ancho[m_ambos] = dx[m_ambos]
+    # Ancho parcial izquierdo
+    ancho[m_baja] = dx[m_baja] * (1 - frac[m_baja])
+    # Ancho parcial derecho
+    ancho[m_sube] = dx[m_sube] * frac[m_sube]
     
-    Returns:
-        float: Ancho superficial en m
-    """
-    try:
-        datos = _preparar_vectores(abscisas, cotas, cota_cero, nivel)
-        if not datos:
-            logger.debug("No se pudo preparar vectores para ancho_superficial")
-            return 0.0
-        x0, x1, y0, y1, dx, dy, h0, h1, frac, m_ambos, m_baja, m_sube = datos
-        
-        ancho = np.zeros_like(dx)
-        # Ancho completo (se tranca en el ancho máximo si desborda, actuando como muro)
-        ancho[m_ambos] = dx[m_ambos]
-        # Ancho parcial izquierdo
-        ancho[m_baja] = dx[m_baja] * (1 - frac[m_baja])
-        # Ancho parcial derecho
-        ancho[m_sube] = dx[m_sube] * frac[m_sube]
-        
-        resultado = float(np.sum(ancho))
-        
-        # Validar resultado
-        if resultado < 0:
-            logger.warning(f"Ancho negativo calculado: {resultado}, retornando 0")
-            return 0.0
-        if np.isnan(resultado) or np.isinf(resultado):
-            logger.error(f"Ancho inválido calculado: {resultado}")
-            return 0.0
-            
-        return resultado
-    except Exception as e:
-        logger.error(f"Error calculando ancho_superficial: {e}", exc_info=True)
-        return 0.0
+    return float(np.sum(ancho))
 
 def perimetro_mojado(abscisas, cotas, cota_cero, nivel, modo_muro="sin_friccion"):
-    """
-    Calcula el perímetro mojado de la sección transversal.
+    datos = _preparar_vectores(abscisas, cotas, cota_cero, nivel)
+    if not datos: return 0.0
+    x0, x1, y0, y1, dx, dy, h0, h1, frac, m_ambos, m_baja, m_sube = datos
     
-    Args:
-        abscisas: Array de abscisas (eje horizontal)
-        cotas: Array de cotas (eje vertical)
-        cota_cero: Cota de referencia del nivel cero
-        nivel: Nivel del agua respecto a cota_cero
-        modo_muro: Modo de tratamiento de muros ("sin_friccion" o "con_friccion")
+    perimetro = np.zeros_like(dx)
+    # Hipotenusa completa
+    perimetro[m_ambos] = np.hypot(dx[m_ambos], dy[m_ambos])
+    # Hipotenusa parcial izquierda
+    perimetro[m_baja] = np.hypot(dx[m_baja] * (1 - frac[m_baja]), h1[m_baja])
+    # Hipotenusa parcial derecha
+    perimetro[m_sube] = np.hypot(dx[m_sube] * frac[m_sube], h0[m_sube])
     
-    Returns:
-        float: Perímetro mojado en m
-    """
-    try:
-        datos = _preparar_vectores(abscisas, cotas, cota_cero, nivel)
-        if not datos:
-            logger.debug("No se pudo preparar vectores para perimetro_mojado")
-            return 0.0
-        x0, x1, y0, y1, dx, dy, h0, h1, frac, m_ambos, m_baja, m_sube = datos
-        
-        perimetro = np.zeros_like(dx)
-        # Hipotenusa completa
-        perimetro[m_ambos] = np.hypot(dx[m_ambos], dy[m_ambos])
-        # Hipotenusa parcial izquierda
-        perimetro[m_baja] = np.hypot(dx[m_baja] * (1 - frac[m_baja]), h1[m_baja])
-        # Hipotenusa parcial derecha
-        perimetro[m_sube] = np.hypot(dx[m_sube] * frac[m_sube], h0[m_sube])
-        
-        p_total = float(np.sum(perimetro))
-        
-        # Validar resultado parcial
-        if p_total < 0:
-            logger.warning(f"Perímetro negativo calculado: {p_total}, retornando 0")
-            return 0.0
-        if np.isnan(p_total) or np.isinf(p_total):
-            logger.error(f"Perímetro inválido calculado: {p_total}")
-            return 0.0
-        
-        # --- LÓGICA DE MUROS DE EXTRAPOLACIÓN ---
-        # Si el usuario eligió "con_friccion", castigamos al río sumando los muros al perímetro
-        if modo_muro == "con_friccion":
-            # h0[0] es la altura del agua sobre la primera abscisa. Si es > 0, se desbordó por la izquierda.
-            if h0[0] > 0:
-                p_total += h0[0]
-                
-            # h1[-1] es la altura del agua sobre la última abscisa. Si es > 0, se desbordó por la derecha.
-            if h1[-1] > 0:
-                p_total += h1[-1]
-        elif modo_muro != "sin_friccion":
-            logger.warning(f"Modo de muro desconocido: {modo_muro}, usando sin_friccion")
-                
-        # Si es "sin_friccion" o "ninguno", simplemente devolvemos p_total intacto 
-        # (el perímetro queda congelado en la topografía máxima, justo como recomienda Ven Te Chow)
-        return p_total
-    except Exception as e:
-        logger.error(f"Error calculando perimetro_mojado: {e}", exc_info=True)
-        return 0.0
+    p_total = float(np.sum(perimetro))
+    
+    # --- LÓGICA DE MUROS DE EXTRAPOLACIÓN ---
+    # Si el usuario eligió "con_friccion", castigamos al río sumando los muros al perímetro
+    if modo_muro == "con_friccion":
+        # h0[0] es la altura del agua sobre la primera abscisa. Si es > 0, se desbordó por la izquierda.
+        if h0[0] > 0:
+            p_total += h0[0]
+            
+        # h1[-1] es la altura del agua sobre la última abscisa. Si es > 0, se desbordó por la derecha.
+        if h1[-1] > 0:
+            p_total += h1[-1]
+            
+    # Si es "sin_friccion" o "ninguno", simplemente devolvemos p_total intacto 
+    # (el perímetro queda congelado en la topografía máxima, justo como recomienda Ven Te Chow)
+    return p_total
 
 def calcular_mape(q_obs, q_calc):
     """
     Calcula el Error Porcentual Absoluto Medio (MAPE).
     Equivalente a =PROMEDIO(ABS(Qcalc - Qobs)/Qobs) * 100
-    
-    Args:
-        q_obs: Array de caudales observados
-        q_calc: Array de caudales calculados
-    
-    Returns:
-        float: MAPE en porcentaje
     """
-    try:
-        q_obs = np.array(q_obs, dtype=float)
-        q_calc = np.array(q_calc, dtype=float)
-        
-        # Validar longitudes
-        if len(q_obs) != len(q_calc):
-            logger.error(f"Longitudes no coinciden en calcular_mape: q_obs={len(q_obs)}, q_calc={len(q_calc)}")
-            return np.nan
-        
-        if len(q_obs) == 0:
-            logger.warning("Arrays vacíos en calcular_mape")
-            return np.nan
-        
-        # Máscara de seguridad para evitar divisiones por cero por si acaso
-        mask = (q_obs != 0) & np.isfinite(q_obs) & np.isfinite(q_calc)
-        
-        if not np.any(mask):
-            logger.warning("No hay valores válidos para calcular MAPE")
-            return np.nan
-        
-        # Cálculo vectorizado del error absoluto porcentual
-        error_porcentual = np.abs((q_calc[mask] - q_obs[mask]) / q_obs[mask])
-        
-        # Retorna el promedio multiplicado por 100 para tenerlo en %
-        resultado = np.mean(error_porcentual) * 100
-        
-        if np.isnan(resultado) or np.isinf(resultado):
-            logger.warning(f"MAPE inválido calculado: {resultado}")
-            return np.nan
-            
-        return resultado
-    except Exception as e:
-        logger.error(f"Error calculando MAPE: {e}", exc_info=True)
-        return np.nan
+    q_obs = np.array(q_obs)
+    q_calc = np.array(q_calc)
+    
+    # Máscara de seguridad para evitar divisiones por cero por si acaso
+    mask = q_obs != 0 
+    
+    # Cálculo vectorizado del error absoluto porcentual
+    error_porcentual = np.abs((q_calc[mask] - q_obs[mask]) / q_obs[mask])
+    
+    # Retorna el promedio multiplicado por 100 para tenerlo en %
+    return np.mean(error_porcentual) * 100
 
 def calcular_error_procedimiento(Q_obs, Q_est, K=2):
     """
     Calcula el error de procedimiento según la fórmula estadística.
-    
-    Args:
-        Q_obs: Arreglo de caudales aforados reales
-        Q_est: Arreglo de caudales estimados por la curva
-        K: Grados de libertad (2 para modelos lineal, exp, log, potencial)
-    
-    Returns:
-        float: Error de procedimiento en porcentaje
+    Q_obs: Arreglo de caudales aforados reales.
+    Q_est: Arreglo de caudales estimados por la curva.
+    K: Grados de libertad (2 para modelos lineal, exp, log, potencial).
     """
-    try:
-        Q_obs = np.array(Q_obs, dtype=float)
-        Q_est = np.array(Q_est, dtype=float)
+    # Evitar divisiones por cero y valores no finitos
+    mask = (Q_est != 0) & np.isfinite(Q_est) & (Q_obs != 0)
+    Q_o = np.array(Q_obs)[mask]
+    Q_e = np.array(Q_est)[mask]
+    
+    N = len(Q_o)
+    
+    if N <= K:
+        return np.nan # No hay suficientes puntos para calcular el error con esos grados de libertad
         
-        # Validar longitudes
-        if len(Q_obs) != len(Q_est):
-            logger.error(f"Longitudes no coinciden en calcular_error_procedimiento: Q_obs={len(Q_obs)}, Q_est={len(Q_est)}")
-            return np.nan
-        
-        # Evitar divisiones por cero y valores no finitos
-        mask = (Q_est != 0) & np.isfinite(Q_est) & (Q_obs != 0) & np.isfinite(Q_obs)
-        Q_o = Q_obs[mask]
-        Q_e = Q_est[mask]
-        
-        N = len(Q_o)
-        
-        if N <= K:
-            logger.debug(f"Insuficientes puntos para calcular error (N={N}, K={K})")
-            return np.nan # No hay suficientes puntos para calcular el error con esos grados de libertad
-        
-        # Validar K
-        if K < 0:
-            logger.warning(f"Grados de libertad negativos: K={K}, usando K=2")
-            K = 2
-            
-        # Aplicar la fórmula
-        suma = np.sum(((Q_o - Q_e) / Q_e)**2)
-        
-        if suma < 0:
-            logger.error(f"Suma negativa en error_procedimiento: {suma}")
-            return np.nan
-            
-        error_sigma = np.sqrt(suma / (N - K))
-        
-        resultado = error_sigma * 100 # Lo multiplicamos por 100 para mostrarlo en %
-        
-        if np.isnan(resultado) or np.isinf(resultado):
-            logger.warning(f"Error de procedimiento inválido: {resultado}")
-            return np.nan
-            
-        return resultado
-    except Exception as e:
-        logger.error(f"Error calculando error_procedimiento: {e}", exc_info=True)
-        return np.nan
-
+    # Aplicar la fórmula
+    suma = np.sum(((Q_o - Q_e) / Q_e)**2)
+    error_sigma = np.sqrt(suma / (N - K))
+    
+    return error_sigma * 100 # Lo multiplicamos por 100 para mostrarlo en %
 
 def crear_figura_k(titulo, H_act, Y_act, inactivos, H_smooth, funciones_adicionales, Y_sel, color_activos, color_inactivos, color_ajuste, color_adicional='cyan', xlabel="Nivel H (m)", ylabel="K"):
     """
@@ -3498,7 +3327,7 @@ with tab7:
                     use_container_width=True
                 )
             
-            st.caption(f"El archivo exportado contiene únicamente las columnas de Nivel (H) y Caudal (Q) basadas en el método de {metodo_definitivo}, manteniendo las demás como referencia.")
+            st.caption(f"El archivo exportado contiene únicamente las columnas de Nivel (H) y Caudal (Q) basadas en el método de {metodo_definitivo}.")do_definitivo}, manteniendo las demás como referencia.")
 
             with st.expander("Ver aforos utilizados"):
                 if df_aforos_comp is not None and not df_aforos_comp.empty:
