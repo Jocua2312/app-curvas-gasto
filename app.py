@@ -283,20 +283,9 @@ def crear_figura_curva(titulo, H_fino, Q_suave, Q_act, H_act, inactivos=None,
 
 @st.cache_data
 def cargar_excel_seguro(file_buffer):
-    nombre_archivo = getattr(file_buffer, 'name', '').lower()
-    contenido = file_buffer.getvalue() if hasattr(file_buffer, 'getvalue') else file_buffer.read()
-    buffer_excel = io.BytesIO(contenido)
-
-    if nombre_archivo.endswith('.xls'):
-        try:
-            return pd.read_excel(buffer_excel, header=None, engine='xlrd')
-        except ImportError as exc:
-            raise ImportError(
-                "No se pudo leer el archivo .xls porque falta la dependencia 'xlrd'."
-            ) from exc
-
-    buffer_excel.seek(0)
-    return pd.read_excel(buffer_excel, header=None)
+    if file_buffer.name.endswith('.xls'):
+        return pd.read_excel(file_buffer, header=None, engine='xlrd')
+    return pd.read_excel(file_buffer, header=None)
 
 @st.cache_data
 def leer_perfil_transversal_completo(archivo_perfil):
@@ -485,6 +474,7 @@ def buscar_columna(columnas, palabras_clave):
         if all(clave in col_limpia for clave in palabras_clave):
             return col
     return None
+
 
 # ============================================================
 # 3. INTERFAZ Y LÓGICA DE STREAMLIT 
