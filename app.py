@@ -293,11 +293,16 @@ def leer_perfil_transversal_completo(archivo_perfil):
     estacion, codigo, fecha_perfil = "Desconocida", "Desconocido", "No especificada"
     cota_cero = None
 
+    def texto_limpio(valor):
+        if pd.isna(valor):
+            return ""
+        return str(valor).strip()
+
     # --- BÚSQUEDA DE COTA CERO ---
     for i in range(min(30, len(df_raw))):
-        fila_vals = df_raw.iloc[i].astype(str).tolist()
+        fila_vals = df_raw.iloc[i].tolist()
         for j, celda in enumerate(fila_vals):
-            texto_celda = celda.strip().upper()
+            texto_celda = texto_limpio(celda).upper()
             if "COTA CERO LM" in texto_celda:
                 if ":" in texto_celda:
                     val_potencial = texto_celda.split(":")[1].strip()
@@ -323,21 +328,21 @@ def leer_perfil_transversal_completo(archivo_perfil):
 
     # --- EXTRACCIÓN DE METADATOS (MEJORADA) ---
     for i in range(min(30, len(df_raw))):
-        row_vals = df_raw.iloc[i].dropna().astype(str).tolist()
+        row_vals = df_raw.iloc[i].dropna().tolist()
         for j, val in enumerate(row_vals):
-            v_up = val.upper()
+            v_up = texto_limpio(val).upper()
             if "CÓDIGO" in v_up or "CODIGO" in v_up:
                 if len(row_vals) > j + 1:
-                    codigo = row_vals[j+1].strip()
+                    codigo = texto_limpio(row_vals[j+1])
             elif "FECHA" in v_up:
                 if len(row_vals) > j + 1:
-                    fecha_perfil = row_vals[j+1].strip()
+                    fecha_perfil = texto_limpio(row_vals[j+1])
             # Intento de extraer estación (puede estar en una celda fija, pero también buscamos por palabras)
             # Primero intentamos la posición fila 10, col 6 (como antes)
             try:
                 val_est = df_raw.iloc[10, 6]
                 if pd.notna(val_est):
-                    estacion_str = str(val_est).strip()
+                    estacion_str = texto_limpio(val_est)
                     # Buscar formato "Nombre [Código]"
                     import re
                     match = re.search(r'^(.*?)\s*\[(.*?)\]$', estacion_str)
@@ -353,7 +358,7 @@ def leer_perfil_transversal_completo(archivo_perfil):
     # (ya está en codigo)
     # Asegurar que estacion no sea "Desconocida" si ya tenemos algo
     if estacion == "Desconocida" and 'val_est' in locals():
-        estacion = str(val_est).strip()
+        estacion = texto_limpio(val_est)
 
     if cota_cero is None:
         raise ValueError("No se pudo encontrar el valor después de 'COTA CERO LM(m):'. Revisa el Excel.")
