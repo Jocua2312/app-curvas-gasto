@@ -3303,17 +3303,21 @@ with tab7:
                     "Área-Velocidad": "Q_av (m³/s)"
                 }
                 
-                # 1. Dejar solo la columna de H y la del método seleccionado
+                # 1. Seleccionar la columna original en metros y la de caudal del método
                 df_export = df_comp[["H (m)", col_map[metodo_definitivo]]].copy()
                 
-                # 2. Renombrar la columna de caudal para que quede limpia y general
-                df_export = df_export.rename(columns={col_map[metodo_definitivo]: "Q (m³/s)"})
+                # 2. Convertir H de metros a centímetros
+                df_export["H (cm)"] = df_export["H (m)"] * 100
                 
-                # 3. Redondear a 3 decimales
-                df_export = df_export.round({"H (m)": 3, "Q (m³/s)": 3})
+                # 3. Renombrar la columna de caudal y reordenar el DataFrame
+                df_export = df_export.rename(columns={col_map[metodo_definitivo]: "Q (m³/s)"})
+                df_export = df_export[["H (cm)", "Q (m³/s)"]] # Filtramos para exportar solo cm y caudal
+                
+                # 4. Redondear (cm a 1 decimal o 0 si prefieres enteros, y Q a 3 decimales)
+                df_export = df_export.round({"H (cm)": 1, "Q (m³/s)": 3})
                 csv_export = df_export.to_csv(index=False).encode('utf-8')
                 
-                # 4. Obtener el código/nombre de la estación y la fecha para el nombre del archivo
+                # 5. Obtener el código/nombre de la estación y la fecha para el nombre del archivo
                 import datetime
                 estacion_codigo = "Estacion_Desconocida"
                 if st.session_state.get('perfil_data'):
