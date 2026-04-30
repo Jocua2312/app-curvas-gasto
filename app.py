@@ -13,6 +13,7 @@ import datetime
 import warnings
 import io
 import logging
+import base64
 warnings.filterwarnings('ignore')
 
 # Configurar logging
@@ -46,8 +47,6 @@ st.markdown(
 # ============================================================
 # 1. FUNCIONES GEOMÉTRICAS (VECTORIZADAS CON NUMPY)
 # ============================================================
-
-import numpy as np
 
 def _preparar_vectores(abscisas, cotas, cota_cero, nivel):
     """Función auxiliar para calcular intersecciones y máscaras de forma vectorizada"""
@@ -276,6 +275,215 @@ def crear_figura_curva(titulo, H_fino, Q_suave, Q_act, H_act, inactivos=None,
         font=dict(color='white')
     )
     return fig
+
+def plotly_fig_to_base64(fig, width=900, height=500):
+    img_bytes = fig.to_image(format="png", width=width, height=height, scale=2)
+    return base64.b64encode(img_bytes).decode('utf-8')
+
+def generar_reporte_html():
+    """Genera un reporte HTML con resultados interactivos, optimizado para que JAMÁS se corte al imprimir."""
+    from datetime import datetime
+    import pandas as pd
+    import numpy as np
+    import plotly.graph_objects as go
+    from scipy.interpolate import interp1d
+    
+    # --- 1, 2 y 3. Datos Generales y Configuración ---
+    metodo = st.session_state.get('metodo_definitivo', 'No seleccionado')
+    nombre_estacion = st.session_state.get('perfil_data', {}).get('estacion', 'Desconocida')
+    codigo_estacion = st.session_state.get('codigo_estacion', 'Desconocido')
+    fecha_reporte = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    tipo_paso = st.session_state.get('tipo_paso_geo', 'Fijo')
+    if tipo_paso == 'Fijo':
+        paso_texto = f"Paso fijo: {st.session_state.get('paso_fijo_geo', 0.1)} m"
+    else:
+        paso_texto = f"Paso progresivo: fino={st.session_state.get('paso_fino_geo', 0.1)} m, grueso={st.session_state.get('paso_grueso_geo', 0.5)} m"
+    modo_muro = st.session_state.get('tipo_extrapolacion_geo', 'No definido')
+    
+    modelo_key = st.session_state.get(f'metodo_select_{"manning" if metodo == "Manning" else "stevens" if metodo == "Stevens" else "av"}', 'Automático')
+    if "Compuesta" in modelo_key:
+        prefijo = "manning_" if metodo == "Manning" else "stevens_" if metodo == "Stevens" else "av_"
+        h_q = st.session_state.get(f'{prefijo}h_quiebre', None)
+        m_inf = st.session_state.get(f'{prefijo}modelo_inf', '')
+        m_sup = st.session_state.get(f'{prefijo}modelo_sup', '')
+        modelo_usado = f"Compuesta (quiebre en H={h_q:.2f}m): inf = {m_inf}, sup = {m_sup}" if h_q else "Compuesta (sin datos)"
+    else:
+        modelo_usado = modelo_key
+        
+    # --- 4. EXTRACCIÓN DE DATOS FALTANTES ---
+    df_aforos = st.session_state.get('df_aforos_activos', pd.DataFrame())
+    prefijo_data = "manning" if metodo == "Manning" else "stevens" if metodo == "Stevens" else "av"
+    
+    df_curva = st.session_state.get(f'{prefijo_data}_curve', pd.DataFrame())
+    error_mape = st.session_state.get(f'{prefijo_data}_error', np.nan)
+    error_sigma = st.session_state.get(f'{prefijo_data}_error_sigma', np.nan)
+    h0 = st.session_state.get('h0_seleccionados', {}).get(metodo, None)
+    
+    f_curva = interp1d(df_curva['H'], df_curva['Q'], kind='linear', fill_value='extrapolate', bounds_error=False) if not df_curva.empty else None
+
+    # Cálculo Vectorizado de Errores
+    if not df_aforos.empty and f_curva is not None:
+        h_vals = df_aforos['H_m'].values
+        q_obs = df_aforos['CAUDAL TOTAL (m3/s)'].values
+        q_est = f_curva(h_vals) 
+        with np.errstate(divide='ignore', invalid='ignore'):
+            err_pct = np.where(q_obs != 0, np.abs(q_est - q_obs) / q_obs * 100, np.nan)
+        if h0 is not None:
+            err_pct = np.where(h_vals <= h0, np.nan, err_pct)
+        df_errores = pd.DataFrame({'H (m)': h_vals, 'Q Aforado (m³/s)': q_obs, 'Error (%)': err_pct}).sort_values('H (m)').reset_index(drop=True)
+    else:
+        df_errores = pd.DataFrame()
+
+    # --- Generar Figuras ---
+    perfil_data = st.session_state.get('perfil_data', {})
+    fig_perfil = go.Figure()
+    if perfil_data and 'abscisas' in perfil_data and 'cotas' in perfil_data:
+        cota_cero = perfil_data.get('cota_cero', 0)
+        fig_perfil.add_trace(go.Scatter(x=perfil_data['abscisas'], y=perfil_data['cotas'], mode='lines+markers', name='Terreno', line=dict(color='#034C8C', width=2)))
+        fig_perfil.add_hline(y=cota_cero, line_dash="dash", line_color="red", annotation_text=f"Cota Cero = {cota_cero:.2f} m", annotation_position="bottom right")
+        
+        # ⚡ SOLUCIÓN DEFINITIVA: Forzar ancho en píxeles seguros para A4 (750px) ⚡
+        fig_perfil.update_layout(
+            autosize=False, width=750, height=450, 
+            xaxis_title="Abscisa (m)", yaxis_title="Cota (m)", 
+            template='plotly_white', margin=dict(l=20, r=20, t=30, b=20)
+        )
+    else:
+        fig_perfil = go.Figure().add_annotation(text="No disponible", x=0.5, y=0.5, showarrow=False)
+
+    fig_curva = go.Figure()
+    if not df_curva.empty:
+        fig_curva.add_trace(go.Scatter(x=df_curva['Q'].values, y=df_curva['H'].values, mode='lines', name='Curva', line=dict(color='#A68A56', width=3)))
+        if not df_aforos.empty:
+            fig_curva.add_trace(go.Scatter(x=df_aforos['CAUDAL TOTAL (m3/s)'], y=df_aforos['H_m'], mode='markers', name='Aforos', marker=dict(color='#034C8C', size=8)))
+        if h0 is not None:
+            fig_curva.add_trace(go.Scatter(x=[0], y=[h0], mode='markers', name=f'H0 = {h0:.3f} m', marker=dict(color='red', size=10, symbol='star')))
+        
+        # ⚡ SOLUCIÓN DEFINITIVA: Forzar ancho en píxeles seguros para A4 (750px) ⚡
+        fig_curva.update_layout(
+            autosize=False, width=730, height=430, 
+            xaxis_title="Caudal Q (m³/s)", yaxis_title="Nivel H (m)", 
+            template='plotly_white', margin=dict(l=20, r=20, t=30, b=20)
+        )
+    else:
+        fig_curva = go.Figure().add_annotation(text="Curva no disponible", x=0.5, y=0.5, showarrow=False)
+
+    # Inyección HTML limpia
+    html_fig_perfil = fig_perfil.to_html(full_html=False, include_plotlyjs='cdn') if fig_perfil.data else "<p>No disponible</p>"
+    html_fig_curva = fig_curva.to_html(full_html=False, include_plotlyjs=False) if fig_curva.data else "<p>No disponible</p>"
+
+    # --- 5. TABLAS HTML ---
+    aforos_table = df_aforos[['NO.', 'FECHA', 'H_m', 'CAUDAL TOTAL (m3/s)']].to_html(index=False, classes='dataframe', float_format="%.3f", na_rep='-') if not df_aforos.empty else "<p>Sin aforos.</p>"
+    curva_table = df_curva.to_html(index=False, classes='dataframe', float_format="%.3f", na_rep='-') if not df_curva.empty else "<p>Curva no disponible.</p>"
+    
+    if not df_errores.empty:
+        def color_err(v):
+            try:
+                if float(v) <= 10: return 'background-color: rgba(34, 197, 94, 0.2); color: #166534; font-weight: bold;'
+                if float(v) <= 20: return 'background-color: rgba(245, 158, 11, 0.2); color: #92400e; font-weight: bold;'
+                return 'background-color: rgba(239, 68, 68, 0.2); color: #991b1b; font-weight: bold;'
+            except: return ''
+        errores_table = df_errores.style.map(color_err, subset=['Error (%)']).format({'H (m)': '{:.2f}', 'Q Aforado (m³/s)': '{:.2f}', 'Error (%)': '{:.1f}%'}, na_rep='-').hide(axis='index').to_html(border=0)
+    else:
+        errores_table = "<p>No hay errores disponibles.</p>"
+
+    # --- 6. HTML FINAL ---
+    c_main, c_sec, c_accent, c_bg, c_soft = "#0157A2", "#0194D3", "#0455BF", "#F3F3F3", "#222562"
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <title>Reporte Técnico - {codigo_estacion}</title>
+        <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&family=Roboto+Mono&display=swap" rel="stylesheet">
+        <style>
+            :root {{ --main: {c_main}; --sec: {c_sec}; --accent: {c_accent}; --bg: {c_bg}; --soft: {c_soft}; }}
+            body {{ font-family: 'Montserrat', sans-serif; margin: 0; padding: 40px 20px; background: var(--bg); color: #333; }}
+            .report-card {{ max-width: 900px; margin: 0 auto; background: white; padding: 50px; border-radius: 15px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); border-top: 10px solid var(--main); }}
+            .header {{ border-bottom: 2px solid var(--bg); padding-bottom: 25px; margin-bottom: 35px; display: flex; justify-content: space-between; align-items: flex-start; }}
+            .header h1 {{ margin: 0; font-size: 25px; color: var(--main); text-transform: uppercase; }}
+            .header-info {{ text-align: right; font-size: 12px; font-family: 'Roboto Mono', monospace; color: var(--sec); }}
+            .kpi-container {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 30px; }}
+            .kpi {{ background: #fff; border: 1px solid #eee; padding: 15px; border-radius: 10px; text-align: center; border-bottom: 3px solid var(--bg); }}
+            .kpi b {{ display: block; font-size: 12px; color: var(--soft); text-transform: uppercase; margin-bottom: 5px; }}
+            .kpi span {{ font-size: 16px; color: var(--main); font-weight: 700; }}
+            .config-box {{ background: #fcfcfc; border-left: 5px solid var(--accent); padding: 20px; border-radius: 5px; margin-bottom: 40px; font-size: 13px; line-height: 1.6; border: 1px solid #eee; }}
+            .section-title {{ background: var(--bg); color: var(--main); padding: 12px 20px; border-left: 5px solid var(--accent); border-radius: 4px; font-size: 16px; margin-top: 50px; margin-bottom: 25px; text-transform: uppercase; }}
+            
+            /* Ajuste para contener las gráficas centradas */
+            .chart-full-width {{ margin-bottom: 40px; text-align: center; border: 1px solid #eee; padding: 20px; border-radius: 8px; background: #fafafa; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; }}
+            .chart-full-width p {{ font-size: 13px; font-weight: 700; color: var(--main); text-transform: uppercase; margin-bottom: 15px; width: 100%; }}
+            .chart-full-width > div {{ margin: 0 auto !important; }}
+
+            .section-box {{ border: 1px solid #eee; border-radius: 8px; padding: 20px; background: #ffffff; margin-bottom: 30px; }}
+            .table-wrapper {{ width: 100%; display: flex; justify-content: center; overflow-x: auto; }}
+            table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
+            th {{ background: var(--main) !important; color: white !important; padding: 14px; text-align: center !important; }}
+            td {{ padding: 12px; border-bottom: 1px solid #eee; text-align: center !important; }}
+            tr:nth-child(even) {{ background: #fafafa; }}
+            .error-table {{ width: 100%; max-width: 600px; margin: 0 auto; }}
+            .error-table table {{ border: 1px solid #eee; box-shadow: 0 2px 8px rgba(0,0,0,0.03); }}
+            .footer {{ text-align: center; margin-top: 60px; font-size: 11px; color: var(--soft); border-top: 1px solid var(--bg); padding-top: 20px; }}
+            
+            @media screen and (max-width: 768px) {{ .kpi-container {{ grid-template-columns: 1fr !important; }} .header {{ flex-direction: column !important; align-items: center !important; text-align: center; }} }}
+            
+            @media print {{
+                @page {{ size: A4 portrait; margin: 1cm; }}
+                body {{ padding: 0; background: white; font-size: 11px; }}
+                .report-card {{ box-shadow: none; width: 100%; max-width: 100%; padding: 0; border: none; }}
+                .header {{ display: flex !important; flex-direction: row !important; justify-content: space-between !important; }}
+                .kpi-container {{ display: grid !important; grid-template-columns: repeat(3, 1fr) !important; }}
+                .section-title {{ background: transparent !important; border-bottom: 1px solid var(--main); }}
+                .section-box {{ border: none; padding: 0; margin-bottom: 20px; background: transparent; }}
+                
+                .chart-full-width {{ page-break-inside: avoid; border: none; padding: 0; background: transparent; }}
+                
+                /* Las tablas seguirán fluyendo perfectamente */
+                .table-wrapper {{ overflow: hidden !important; display: block; width: 100%; }}
+                table, .error-table {{ width: 100% !important; max-width: 100% !important; }}
+                tr {{ page-break-inside: avoid; }} th, td {{ padding: 6px 4px; border-bottom: 1px solid #ddd; }}
+                thead {{ display: table-header-group; }}
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="report-card">
+            <div class="header">
+                <div><h1>Reporte Técnico - Curva de Gasto</h1><div style="color: var(--accent); font-weight: 700; font-size: 23px;">{nombre_estacion}</div></div>
+                <div class="header-info">CÓDIGO: {codigo_estacion}<br>FECHA: {fecha_reporte}</div>
+            </div>
+            <div class="kpi-container">
+                <div class="kpi"><b>Método</b><span>{metodo}</span></div>
+                <div class="kpi"><b>EPAM</b><span>{f"{error_mape:.2f}%" if pd.notna(error_mape) else "N/A"}</span></div>
+                <div class="kpi"><b>Error procedimiento</b><span>{f"{error_sigma:.2f}%" if pd.notna(error_sigma) else "N/A"}</span></div>
+            </div>
+            <div class="config-box">
+                <div><strong>Modelo Matemático:</strong> {modelo_usado}</div>
+                <div style="margin-top: 8px;"><strong>Parámetros Geométricos:</strong> {modo_muro} | {paso_texto}</div>
+                <div style="margin-top: 8px;"><strong>Nivel H0:</strong> {f"{h0:.3f} m" if h0 is not None else "No definido"}</div>
+            </div>
+
+            <h2 class="section-title">Análisis Visual</h2>
+            <div class="chart-full-width"><p>Perfil Transversal de la Sección</p>{html_fig_perfil}</div>
+            <div class="chart-full-width"><p>Curva de Gasto Generada y Aforos</p>{html_fig_curva}</div>
+
+            <h2 class="section-title">Análisis de Desviaciones</h2>
+            <div class="section-box"><div class="table-wrapper"><div class="error-table">{errores_table}</div></div></div>
+
+            <h2 class="section-title">Historial de Aforos Activos</h2>
+            <div class="section-box"><div class="table-wrapper">{aforos_table}</div></div>
+
+            <h2 class="section-title">Resultados de la Curva Calculada</h2>
+            <div class="section-box"><div class="table-wrapper">{curva_table}</div></div>
+
+            <div class="footer">Documento generado por el motor de cálculo Curva de Gasto v2.0<br>© 2026 - Reporte de Ingeniería Hidrológica</div>
+        </div>
+    </body>
+    </html>
+    """
+    return html_content
 
 # ============================================================
 # 2. LECTURA DE ARCHIVOS
@@ -533,6 +741,37 @@ with st.sidebar:
 # ==========================================
 # SECCIÓN EN LA BARRA LATERAL: GUARDAR/CARGAR
 # ==========================================
+def normalizar_valor_cargado(clave, valor):
+    """Normaliza valores restaurados para evitar incompatibilidades de widgets."""
+    if clave in ("fecha_inicio", "fecha_fin"):
+        if valor is None:
+            return None
+        try:
+            # Compatibilidad con valores guardados como array/lista/tupla.
+            if isinstance(valor, (list, tuple, np.ndarray, pd.Series, pd.Index)):
+                if len(valor) == 0:
+                    return None
+                valor = list(valor)[0]
+
+            fecha = pd.to_datetime(valor, errors='coerce')
+            if pd.isna(fecha):
+                return None
+            return fecha.date()
+        except Exception:
+            return None
+
+    if isinstance(valor, pd.DataFrame):
+        # Garantiza que columnas datetime queden en un formato compatible con widgets de Streamlit.
+        df_norm = valor.copy()
+        for col in df_norm.columns:
+            nombre_col = str(col).upper()
+            es_fecha = "FECHA" in nombre_col or pd.api.types.is_datetime64_any_dtype(df_norm[col])
+            if es_fecha:
+                df_norm[col] = pd.to_datetime(df_norm[col], errors='coerce').dt.date
+        return df_norm
+
+    return valor
+
 with st.sidebar.expander("💾 Guardar / Cargar Proyecto", expanded=False):
     st.markdown("Guarda tu progreso actual o carga un análisis previo.")
     
@@ -590,8 +829,19 @@ with st.sidebar.expander("💾 Guardar / Cargar Proyecto", expanded=False):
         if st.button("🔄 Restaurar Sesión", use_container_width=True):
             try:
                 datos_cargados = pickle.loads(archivo_subido.getvalue())
+                errores_carga = []
+
                 for clave, valor in datos_cargados.items():
-                    st.session_state[clave] = valor
+                    try:
+                        st.session_state[clave] = normalizar_valor_cargado(clave, valor)
+                    except Exception as e_clave:
+                        errores_carga.append(f"{clave}: {e_clave}")
+
+                if errores_carga:
+                    st.warning(
+                        "La sesión se restauró parcialmente. "
+                        f"Claves con problema: {' | '.join(errores_carga[:5])}"
+                    )
                 
                 st.success(f"¡Proyecto restaurado con éxito!")
                 st.rerun() 
@@ -688,11 +938,7 @@ with tab1:
         col_fecha = next((col for col in df.columns if "FECHA" in str(col).upper()), None)
 
         if col_fecha:
-            df[col_fecha] = pd.to_datetime(df[col_fecha], errors='coerce', dayfirst=True)
-            st.session_state.temp_aforos_activos[col_fecha] = pd.to_datetime(
-                st.session_state.temp_aforos_activos[col_fecha], errors='coerce', dayfirst=True
-            )
-            fechas_validas = df[col_fecha].dropna()
+            fechas_validas = pd.to_datetime(df[col_fecha], errors='coerce', dayfirst=True).dropna()
             
             if not fechas_validas.empty:
                 min_date = fechas_validas.min().date()
@@ -716,8 +962,9 @@ with tab1:
                     st.error("⚠️ La fecha de inicio no puede ser mayor a la fecha de fin.")
                     df_mostrar_temp = st.session_state.temp_aforos_activos
                 else:
-                    mask_fecha = (st.session_state.temp_aforos_activos[col_fecha].dt.date >= f_inicio) & \
-                                 (st.session_state.temp_aforos_activos[col_fecha].dt.date <= f_fin)
+                    fechas_temp = pd.to_datetime(st.session_state.temp_aforos_activos[col_fecha], errors='coerce', dayfirst=True)
+                    mask_fecha = (fechas_temp.dt.date >= f_inicio) & \
+                                 (fechas_temp.dt.date <= f_fin)
                     df_mostrar_temp = st.session_state.temp_aforos_activos[mask_fecha]
             else:
                 df_mostrar_temp = st.session_state.temp_aforos_activos
@@ -3339,84 +3586,101 @@ with tab7:
             
             st.caption(f"El archivo exportado contiene únicamente las columnas de Nivel (H) y Caudal (Q) basadas en el método de {metodo_definitivo}, manteniendo las demás como referencia.")
 
-            with st.expander("Ver aforos utilizados"):
-                if df_aforos_comp is not None and not df_aforos_comp.empty:
-                    cols_aforo = ["NO.", "FECHA", "H_m", "CAUDAL TOTAL (m3/s)", "ÁREA SEC. (m2)", "VELOC. MEDIA (m/s)"]
-                    cols_existentes = [c for c in cols_aforo if c in df_aforos_comp.columns]
-                    df_af_mostrar = df_aforos_comp[cols_existentes].copy()
-                    df_af_mostrar = df_af_mostrar.rename(columns={"H_m": "H (m)", "CAUDAL TOTAL (m3/s)": "Q (m³/s)"})
-                    st.dataframe(df_af_mostrar, use_container_width=True, hide_index=True)
+            # --- Reporte ejecutivo (1 solo clic, ultra rápido) ---
+            st.markdown("---")
+            st.subheader("📄 Descarga de Reporte Ejecutivo")
 
-    st.markdown("---")
-    st.subheader("💾 Exportar Resultados Completos")
-    st.markdown("Descarga un archivo Excel con todas las tablas calculadas: geometría, variables de los aforos y las curvas de gasto extrapoladas de los 3 métodos.")
+            # 1. Extracción segura de variables
+            perfil = st.session_state.get('perfil_data', {})
+            nombre_estacion = perfil.get('estacion', 'Estacion')
+            codigo_estacion = perfil.get('codigo', 'Codigo')
 
-    # Función para empaquetar todo en un Excel en memoria
-    def generar_excel_exportacion():
-        output = io.BytesIO()
-        # Usamos xlsxwriter como motor para crear el archivo Excel
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            
-            # 1. Exportar Geometría
-            if st.session_state.get('df_geo') is not None:
-                st.session_state.df_geo.to_excel(writer, sheet_name='Geometria', index=False)
-            
-            # 2. Exportar Manning
-            if st.session_state.get('manning_data') is not None:
-                st.session_state.manning_data.to_excel(writer, sheet_name='Manning_Aforos', index=False)
-            if st.session_state.get('manning_curve') is not None:
-                st.session_state.manning_curve.to_excel(writer, sheet_name='Manning_Curva', index=False)
-            
-            # 3. Exportar Stevens
-            if st.session_state.get('stevens_data') is not None:
-                st.session_state.stevens_data.to_excel(writer, sheet_name='Stevens_Aforos', index=False)
-            if st.session_state.get('stevens_curve') is not None:
-                st.session_state.stevens_curve.to_excel(writer, sheet_name='Stevens_Curva', index=False)
-            
-            # 4. Exportar Área-Velocidad
-            if st.session_state.get('av_data') is not None:
-                st.session_state.av_data.to_excel(writer, sheet_name='AreaVelocidad_Aforos', index=False)
-            if st.session_state.get('av_curve') is not None:
-                st.session_state.av_curve.to_excel(writer, sheet_name='AreaVelocidad_Curva', index=False)
-            
-            # 5. Hoja Resumen de Errores
-            resumen_errores = pd.DataFrame({
-                "Método": ["Manning", "Stevens", "Área-Velocidad"],
-                "MAPE Promedio (%)": [
-                    st.session_state.get('manning_error'),
-                    st.session_state.get('stevens_error'),
-                    st.session_state.get('av_error')
-                ],
-                "Error de Procedimiento σq (%)": [
-                    st.session_state.get('manning_error_sigma'),
-                    st.session_state.get('stevens_error_sigma'),
-                    st.session_state.get('av_error_sigma')
-                ]
-            })
-            resumen_errores.to_excel(writer, sheet_name='Resumen_Errores', index=False)
+            # 2. Nombre del archivo (Usando el datetime.datetime nativo de tu app)
+            fecha_hoy = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            nombre_archivo = f"Reporte_{nombre_estacion}_{codigo_estacion}-{fecha_hoy}.html"
 
-        return output.getvalue()
+            # 3. Botón de descarga directo
+            st.download_button(
+                label="⬇️ Descargar Reporte Completo (.html)",
+                data=generar_reporte_html(),  
+                file_name=nombre_archivo,
+                mime="text/html",
+                use_container_width=True,
+                type="primary" 
+            )
 
-    # Mostrar el botón solo si al menos hay datos procesados (ej. Geometría)
-    if st.session_state.get('df_geo') is not None:
-        excel_data = generar_excel_exportacion()
-        
-        # Generar nombre dinámico para el archivo Excel
-        estacion_nombre = "Estacion_Desconocida"
-        if st.session_state.get('perfil_data'):
-            estacion_nombre = str(st.session_state.perfil_data.get('estacion', 'Estacion')).replace(" ", "_")
-        fecha_hoy = datetime.datetime.now().strftime("%Y%m%d")
-        
-        st.download_button(
-            label="📥 Descargar todos los cálculos a Excel (.xlsx)",
-            data=excel_data,
-            file_name=f"Calculos_Curva_{estacion_nombre}_{fecha_hoy}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary",
-            use_container_width=True
-        )
-    else:
-        st.info("💡 Procesa los aforos y genera la geometría para habilitar la exportación de cálculos.")
+            st.info("💡 Haz doble clic en el archivo descargado para abrirlo. Podrás interactuar con las gráficas o presionar Ctrl+P (Cmd+P) para imprimir o guardarlo como PDF.")
+
+        st.markdown("---")
+        st.subheader("💾 Exportar Resultados Completos")
+        st.markdown("Descarga un archivo Excel con todas las tablas calculadas: geometría, variables de los aforos y las curvas de gasto extrapoladas de los 3 métodos.")
+
+        # Función para empaquetar todo en un Excel en memoria
+        def generar_excel_exportacion():
+            output = io.BytesIO()
+            # Usamos xlsxwriter como motor para crear el archivo Excel
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                
+                # 1. Exportar Geometría
+                if st.session_state.get('df_geo') is not None:
+                    st.session_state.df_geo.to_excel(writer, sheet_name='Geometria', index=False)
+                
+                # 2. Exportar Manning
+                if st.session_state.get('manning_data') is not None:
+                    st.session_state.manning_data.to_excel(writer, sheet_name='Manning_Aforos', index=False)
+                if st.session_state.get('manning_curve') is not None:
+                    st.session_state.manning_curve.to_excel(writer, sheet_name='Manning_Curva', index=False)
+                
+                # 3. Exportar Stevens
+                if st.session_state.get('stevens_data') is not None:
+                    st.session_state.stevens_data.to_excel(writer, sheet_name='Stevens_Aforos', index=False)
+                if st.session_state.get('stevens_curve') is not None:
+                    st.session_state.stevens_curve.to_excel(writer, sheet_name='Stevens_Curva', index=False)
+                
+                # 4. Exportar Área-Velocidad
+                if st.session_state.get('av_data') is not None:
+                    st.session_state.av_data.to_excel(writer, sheet_name='AreaVelocidad_Aforos', index=False)
+                if st.session_state.get('av_curve') is not None:
+                    st.session_state.av_curve.to_excel(writer, sheet_name='AreaVelocidad_Curva', index=False)
+                
+                # 5. Hoja Resumen de Errores
+                resumen_errores = pd.DataFrame({
+                    "Método": ["Manning", "Stevens", "Área-Velocidad"],
+                    "MAPE Promedio (%)": [
+                        st.session_state.get('manning_error'),
+                        st.session_state.get('stevens_error'),
+                        st.session_state.get('av_error')
+                    ],
+                    "Error de Procedimiento σq (%)": [
+                        st.session_state.get('manning_error_sigma'),
+                        st.session_state.get('stevens_error_sigma'),
+                        st.session_state.get('av_error_sigma')
+                    ]
+                })
+                resumen_errores.to_excel(writer, sheet_name='Resumen_Errores', index=False)
+
+            return output.getvalue()
+
+        # Mostrar el botón solo si al menos hay datos procesados (ej. Geometría)
+        if st.session_state.get('df_geo') is not None:
+            excel_data = generar_excel_exportacion()
+            
+            # Generar nombre dinámico para el archivo Excel
+            estacion_nombre = "Estacion_Desconocida"
+            if st.session_state.get('perfil_data'):
+                estacion_nombre = str(st.session_state.perfil_data.get('estacion', 'Estacion')).replace(" ", "_")
+            fecha_hoy = datetime.datetime.now().strftime("%Y%m%d")
+            
+            st.download_button(
+                label="📥 Descargar todos los cálculos a Excel (.xlsx)",
+                data=excel_data,
+                file_name=f"Calculos_Curva_{estacion_nombre}_{fecha_hoy}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                use_container_width=True
+            )
+        else:
+            st.info("💡 Procesa los aforos y genera la geometría para habilitar la exportación de cálculos.")
 
 # ================== PESTAÑA 8: HISTÓRICO DE CURVAS ==================
 with tab8:
