@@ -281,7 +281,7 @@ def plotly_fig_to_base64(fig, width=900, height=500):
     return base64.b64encode(img_bytes).decode('utf-8')
 
 def generar_reporte_html():
-    """Genera un reporte HTML con resultados interactivos, optimizado para que JAMÁS se corte al imprimir."""
+    """Genera un reporte HTML con resultados interactivos, optimizado para impresión A4."""
     from datetime import datetime
     import pandas as pd
     import numpy as np
@@ -289,10 +289,25 @@ def generar_reporte_html():
     from scipy.interpolate import interp1d
     
     # --- 1, 2 y 3. Datos Generales y Configuración ---
+    perfil_data = st.session_state.get('perfil_data', {})
+    
     metodo = st.session_state.get('metodo_definitivo', 'No seleccionado')
-    nombre_estacion = st.session_state.get('perfil_data', {}).get('estacion', 'Desconocida')
+    nombre_estacion = perfil_data.get('estacion', 'Desconocida')
     codigo_estacion = st.session_state.get('codigo_estacion', 'Desconocido')
+    fecha_perfil = perfil_data.get('fecha', 'No registrada') 
     fecha_reporte = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Niveles de Interés, Método H0 y Banda de Error
+    niv_1 = st.session_state.get('nivel_interes_1', None)
+    niv_2 = st.session_state.get('nivel_interes_2', None)
+    texto_niveles = f"Nivel 1 (P25): {niv_1:.3f} m | Nivel 2 (P75): {niv_2:.3f} m" if (niv_1 is not None and niv_2 is not None) else "No definidos"
+        
+    # Extraemos la fuente del H0 específicamente para el método definitivo
+    metodo_h0 = st.session_state.get('h0_fuentes', {}).get(metodo, 'No aplicado')
+    
+    # Banda de error global
+    banda_error = st.session_state.get('banda_error_global', np.nan)
+    texto_banda = f"±{banda_error:.2f}%" if pd.notna(banda_error) else "N/A"
     
     tipo_paso = st.session_state.get('tipo_paso_geo', 'Fijo')
     if tipo_paso == 'Fijo':
@@ -336,19 +351,13 @@ def generar_reporte_html():
         df_errores = pd.DataFrame()
 
     # --- Generar Figuras ---
-    perfil_data = st.session_state.get('perfil_data', {})
     fig_perfil = go.Figure()
     if perfil_data and 'abscisas' in perfil_data and 'cotas' in perfil_data:
         cota_cero = perfil_data.get('cota_cero', 0)
         fig_perfil.add_trace(go.Scatter(x=perfil_data['abscisas'], y=perfil_data['cotas'], mode='lines+markers', name='Terreno', line=dict(color='#034C8C', width=2)))
         fig_perfil.add_hline(y=cota_cero, line_dash="dash", line_color="red", annotation_text=f"Cota Cero = {cota_cero:.2f} m", annotation_position="bottom right")
-        
-        # ⚡ SOLUCIÓN DEFINITIVA: Forzar ancho en píxeles seguros para A4 (750px) ⚡
-        fig_perfil.update_layout(
-            autosize=False, width=750, height=450, 
-            xaxis_title="Abscisa (m)", yaxis_title="Cota (m)", 
-            template='plotly_white', margin=dict(l=20, r=20, t=30, b=20)
-        )
+
+        fig_perfil.update_layout(autosize=False, width=750, height=450, xaxis_title="Abscisa (m)", yaxis_title="Cota (m)", template='plotly_white', margin=dict(l=20, r=20, t=30, b=20))
     else:
         fig_perfil = go.Figure().add_annotation(text="No disponible", x=0.5, y=0.5, showarrow=False)
 
@@ -359,17 +368,15 @@ def generar_reporte_html():
             fig_curva.add_trace(go.Scatter(x=df_aforos['CAUDAL TOTAL (m3/s)'], y=df_aforos['H_m'], mode='markers', name='Aforos', marker=dict(color='#034C8C', size=8)))
         if h0 is not None:
             fig_curva.add_trace(go.Scatter(x=[0], y=[h0], mode='markers', name=f'H0 = {h0:.3f} m', marker=dict(color='red', size=10, symbol='star')))
-        
-        # ⚡ SOLUCIÓN DEFINITIVA: Forzar ancho en píxeles seguros para A4 (750px) ⚡
-        fig_curva.update_layout(
-            autosize=False, width=730, height=430, 
-            xaxis_title="Caudal Q (m³/s)", yaxis_title="Nivel H (m)", 
-            template='plotly_white', margin=dict(l=20, r=20, t=30, b=20)
-        )
+            
+        if niv_1 is not None and niv_2 is not None:
+            fig_curva.add_hline(y=niv_1, line_dash="dot", line_color="green", annotation_text="Nivel 1", opacity=0.6)
+            fig_curva.add_hline(y=niv_2, line_dash="dot", line_color="orange", annotation_text="Nivel 2", opacity=0.6)
+
+        fig_curva.update_layout(autosize=False, width=750, height=450, xaxis_title="Caudal Q (m³/s)", yaxis_title="Nivel H (m)", template='plotly_white', margin=dict(l=20, r=20, t=30, b=20))
     else:
         fig_curva = go.Figure().add_annotation(text="Curva no disponible", x=0.5, y=0.5, showarrow=False)
 
-    # Inyección HTML limpia
     html_fig_perfil = fig_perfil.to_html(full_html=False, include_plotlyjs='cdn') if fig_perfil.data else "<p>No disponible</p>"
     html_fig_curva = fig_curva.to_html(full_html=False, include_plotlyjs=False) if fig_curva.data else "<p>No disponible</p>"
 
@@ -399,26 +406,28 @@ def generar_reporte_html():
         <title>Reporte Técnico - {codigo_estacion}</title>
         <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&family=Roboto+Mono&display=swap" rel="stylesheet">
         <style>
+            /* REGLA DE ORO: Evitar que el padding expanda el 100% del ancho */
+            * {{ box-sizing: border-box !important; }}
+            
             :root {{ --main: {c_main}; --sec: {c_sec}; --accent: {c_accent}; --bg: {c_bg}; --soft: {c_soft}; }}
             body {{ font-family: 'Montserrat', sans-serif; margin: 0; padding: 40px 20px; background: var(--bg); color: #333; }}
             .report-card {{ max-width: 900px; margin: 0 auto; background: white; padding: 50px; border-radius: 15px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); border-top: 10px solid var(--main); }}
             .header {{ border-bottom: 2px solid var(--bg); padding-bottom: 25px; margin-bottom: 35px; display: flex; justify-content: space-between; align-items: flex-start; }}
             .header h1 {{ margin: 0; font-size: 25px; color: var(--main); text-transform: uppercase; }}
             .header-info {{ text-align: right; font-size: 12px; font-family: 'Roboto Mono', monospace; color: var(--sec); }}
-            .kpi-container {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 30px; }}
+            .kpi-container {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 30px; }}
             .kpi {{ background: #fff; border: 1px solid #eee; padding: 15px; border-radius: 10px; text-align: center; border-bottom: 3px solid var(--bg); }}
             .kpi b {{ display: block; font-size: 12px; color: var(--soft); text-transform: uppercase; margin-bottom: 5px; }}
             .kpi span {{ font-size: 16px; color: var(--main); font-weight: 700; }}
             .config-box {{ background: #fcfcfc; border-left: 5px solid var(--accent); padding: 20px; border-radius: 5px; margin-bottom: 40px; font-size: 13px; line-height: 1.6; border: 1px solid #eee; }}
             .section-title {{ background: var(--bg); color: var(--main); padding: 12px 20px; border-left: 5px solid var(--accent); border-radius: 4px; font-size: 16px; margin-top: 50px; margin-bottom: 25px; text-transform: uppercase; }}
             
-            /* Ajuste para contener las gráficas centradas */
             .chart-full-width {{ margin-bottom: 40px; text-align: center; border: 1px solid #eee; padding: 20px; border-radius: 8px; background: #fafafa; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; }}
             .chart-full-width p {{ font-size: 13px; font-weight: 700; color: var(--main); text-transform: uppercase; margin-bottom: 15px; width: 100%; }}
             .chart-full-width > div {{ margin: 0 auto !important; }}
 
-            .section-box {{ border: 1px solid #eee; border-radius: 8px; padding: 20px; background: #ffffff; margin-bottom: 30px; }}
-            .table-wrapper {{ width: 100%; display: flex; justify-content: center; overflow-x: auto; }}
+            .section-box {{ border: 1px solid #eee; border-radius: 8px; padding: 20px; background: #ffffff; margin-bottom: 30px; width: 100%; }}
+            .table-wrapper {{ width: 100%; overflow-x: auto; }}
             table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
             th {{ background: var(--main) !important; color: white !important; padding: 14px; text-align: center !important; }}
             td {{ padding: 12px; border-bottom: 1px solid #eee; text-align: center !important; }}
@@ -427,24 +436,69 @@ def generar_reporte_html():
             .error-table table {{ border: 1px solid #eee; box-shadow: 0 2px 8px rgba(0,0,0,0.03); }}
             .footer {{ text-align: center; margin-top: 60px; font-size: 11px; color: var(--soft); border-top: 1px solid var(--bg); padding-top: 20px; }}
             
-            @media screen and (max-width: 768px) {{ .kpi-container {{ grid-template-columns: 1fr !important; }} .header {{ flex-direction: column !important; align-items: center !important; text-align: center; }} }}
+            @media screen and (max-width: 768px) {{ .kpi-container {{ grid-template-columns: 1fr 1fr !important; }} .header {{ flex-direction: column !important; align-items: center !important; text-align: center; }} }}
             
+            /* ⚡ EL FORMATO DEFINITIVO PARA PDF ⚡ */
             @media print {{
                 @page {{ size: A4 portrait; margin: 1cm; }}
-                body {{ padding: 0; background: white; font-size: 11px; }}
-                .report-card {{ box-shadow: none; width: 100%; max-width: 100%; padding: 0; border: none; }}
+                
+                body, html {{ 
+                    width: 100% !important; 
+                    margin: 0 !important; 
+                    padding: 0 !important; 
+                    background: white; 
+                    font-size: 10px !important; 
+                }}
+                
+                .report-card {{ 
+                    width: 100% !important; 
+                    max-width: 100% !important; 
+                    padding: 0 !important; 
+                    border: none !important; 
+                    box-shadow: none !important; 
+                    margin: 0 !important; 
+                }}
+                
                 .header {{ display: flex !important; flex-direction: row !important; justify-content: space-between !important; }}
-                .kpi-container {{ display: grid !important; grid-template-columns: repeat(3, 1fr) !important; }}
-                .section-title {{ background: transparent !important; border-bottom: 1px solid var(--main); }}
-                .section-box {{ border: none; padding: 0; margin-bottom: 20px; background: transparent; }}
+                .kpi-container {{ display: grid !important; grid-template-columns: repeat(4, 1fr) !important; gap: 8px; }}
+                .section-title {{ background: transparent !important; border-bottom: 1px solid var(--main); padding: 8px 0; margin-top: 20px; }}
+                .chart-full-width {{ page-break-inside: avoid !important; border: none !important; padding: 0 !important; margin-bottom: 20px !important; }}
                 
-                .chart-full-width {{ page-break-inside: avoid; border: none; padding: 0; background: transparent; }}
+                /* DESTRUIR CONTENEDORES QUE DAÑAN EL ANCHO */
+                .section-box, .table-wrapper, .error-table {{ 
+                    display: block !important; 
+                    width: 100% !important; 
+                    max-width: 100% !important;
+                    margin: 0 0 15px 0 !important;
+                    padding: 0 !important;
+                    overflow: hidden !important; /* Cambiado a hidden para prevenir desbordes fantasma */
+                    border: none !important;
+                }}
                 
-                /* Las tablas seguirán fluyendo perfectamente */
-                .table-wrapper {{ overflow: hidden !important; display: block; width: 100%; }}
-                table, .error-table {{ width: 100% !important; max-width: 100% !important; }}
-                tr {{ page-break-inside: avoid; }} th, td {{ padding: 6px 4px; border-bottom: 1px solid #ddd; }}
+                /* TABLAS ESTRICTAS */
+                table, table.dataframe {{ 
+                    display: table !important;
+                    width: 100% !important; 
+                    max-width: 100% !important; 
+                    table-layout: fixed !important; /* Obliga a que todas las columnas encajen en el 100% */
+                    border-collapse: collapse !important;
+                    margin: 0 !important;
+                }}
+                
+                tr {{ page-break-inside: avoid !important; }}
+                
+                th, td {{ 
+                    padding: 4px 2px !important; /* Relleno mínimo */
+                    word-wrap: break-word !important; 
+                    overflow-wrap: break-word !important;
+                    word-break: break-all !important; /* CRUCIAL: Rompe números o palabras muy largas si no caben */
+                    white-space: normal !important; 
+                    border: 1px solid #ddd !important; /* Borde explícito para estructurar mejor en PDF */
+                    font-size: 9px !important;
+                }}
+                
                 thead {{ display: table-header-group; }}
+                tfoot {{ display: table-footer-group; }}
             }}
         </style>
     </head>
@@ -454,15 +508,20 @@ def generar_reporte_html():
                 <div><h1>Reporte Técnico - Curva de Gasto</h1><div style="color: var(--accent); font-weight: 700; font-size: 23px;">{nombre_estacion}</div></div>
                 <div class="header-info">CÓDIGO: {codigo_estacion}<br>FECHA: {fecha_reporte}</div>
             </div>
+            
             <div class="kpi-container">
                 <div class="kpi"><b>Método</b><span>{metodo}</span></div>
                 <div class="kpi"><b>EPAM</b><span>{f"{error_mape:.2f}%" if pd.notna(error_mape) else "N/A"}</span></div>
-                <div class="kpi"><b>Error procedimiento</b><span>{f"{error_sigma:.2f}%" if pd.notna(error_sigma) else "N/A"}</span></div>
+                <div class="kpi"><b>Error σq</b><span>{f"{error_sigma:.2f}%" if pd.notna(error_sigma) else "N/A"}</span></div>
+                <div class="kpi"><b>Banda Error</b><span>{texto_banda}</span></div>
             </div>
+            
             <div class="config-box">
                 <div><strong>Modelo Matemático:</strong> {modelo_usado}</div>
                 <div style="margin-top: 8px;"><strong>Parámetros Geométricos:</strong> {modo_muro} | {paso_texto}</div>
-                <div style="margin-top: 8px;"><strong>Nivel H0:</strong> {f"{h0:.3f} m" if h0 is not None else "No definido"}</div>
+                <div style="margin-top: 8px;"><strong>Fecha del Perfil:</strong> {fecha_perfil}</div>
+                <div style="margin-top: 8px;"><strong>Nivel H0:</strong> {f"{h0:.3f} m" if h0 is not None else "No definido"} (Método: {metodo_h0})</div>
+                <div style="margin-top: 8px;"><strong>Niveles de Análisis:</strong> {texto_niveles}</div>
             </div>
 
             <h2 class="section-title">Análisis Visual</h2>
