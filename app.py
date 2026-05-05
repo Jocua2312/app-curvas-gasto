@@ -535,7 +535,7 @@ def generar_reporte_html(numero_reporte, fecha_vigencia_inicio=None, fecha_vigen
             .kpi {{ background: #fff; border: 1px solid #eee; padding: 15px; border-radius: 10px; text-align: center; border-bottom: 3px solid var(--bg); }}
             .kpi b {{ display: block; font-size: 12px; color: var(--soft); text-transform: uppercase; margin-bottom: 5px; }}
             .kpi span {{ font-size: 16px; color: var(--main); font-weight: 700; }}
-            .config-box {{ background: #fcfcfc; border-left: 5px solid var(--accent); padding: 5px; border-radius: 5px; margin-bottom: 40px; font-size: 13px; line-height: 1.6; border: 1px solid #eee; }}
+            .config-box {{ background: #fcfcfc; border-left: 5px solid var(--accent); padding: 5px; border-radius: 5px; margin-bottom: 5px; font-size: 13px; line-height: 1.6; border: 1px solid #eee; }}
             .section-title {{ background: var(--bg); color: var(--main); padding: 12px 20px; border-left: 5px solid var(--accent); border-radius: 4px; font-size: 16px; margin-top: 50px; margin-bottom: 25px; text-transform: uppercase; }}
             
             .chart-full-width {{ margin-bottom: 40px; text-align: center; border: 1px solid #eee; padding: 20px; border-radius: 8px; background: #fafafa; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; }}
