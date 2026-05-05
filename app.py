@@ -391,7 +391,7 @@ def generar_reporte_html(numero_reporte, fecha_vigencia_inicio=None, fecha_vigen
     fecha_reporte = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     logo_b64 = _obtener_logo_base64()
     logo_html = f'<img class="header-logo" src="data:image/png;base64,{logo_b64}" alt="Logo IDEAM">' if logo_b64 else ''
-    numero_reporte_texto = f"N° de reporte {int(numero_reporte):03d}"
+    numero_reporte_texto = f"Tabla de Gasto N° {int(numero_reporte):03d}"
     if fecha_vigencia_inicio is not None:
         if hasattr(fecha_vigencia_inicio, "strftime"):
             fecha_vigencia_inicio_txt = fecha_vigencia_inicio.strftime("%d/%m/%Y")
@@ -3808,7 +3808,7 @@ with tab7:
 
             with st.form("form_config_reporte_ejecutivo"):
                 numero_reporte = st.number_input(
-                    "N° de reporte",
+                    "Tabla de Gasto N°",
                     min_value=1,
                     step=1,
                     value=int(st.session_state.numero_reporte_ejecutivo),
