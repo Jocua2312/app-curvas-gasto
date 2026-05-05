@@ -14,6 +14,9 @@ import warnings
 import io
 import logging
 import base64
+import hashlib
+import re
+from pathlib import Path
 warnings.filterwarnings('ignore')
 
 # Configurar logging
@@ -280,7 +283,67 @@ def plotly_fig_to_base64(fig, width=900, height=500):
     img_bytes = fig.to_image(format="png", width=width, height=height, scale=2)
     return base64.b64encode(img_bytes).decode('utf-8')
 
-def generar_reporte_html():
+@st.cache_data(show_spinner=False)
+def _obtener_logo_base64():
+    ruta_logo = Path(__file__).with_name("Logo-IDEAM.png")
+    if not ruta_logo.exists():
+        return None
+    return base64.b64encode(ruta_logo.read_bytes()).decode("utf-8")
+
+def _sanitizar_nombre_archivo(nombre_archivo):
+    nombre_limpio = re.sub(r"[^A-Za-z0-9._-]+", "_", str(nombre_archivo))
+    return re.sub(r"_+", "_", nombre_limpio).strip("._") or "reporte"
+
+def _hash_dataframe(df):
+    if df is None or df.empty:
+        return "empty"
+    contenido = df.to_csv(index=False).encode("utf-8")
+    return hashlib.sha256(contenido).hexdigest()
+
+def _firma_reporte(numero_reporte):
+    perfil = st.session_state.get('perfil_data', {}) or {}
+    df_aforos = st.session_state.get('df_aforos_activos', pd.DataFrame())
+    prefijo_data = "manning" if st.session_state.get('metodo_definitivo') == "Manning" else "stevens" if st.session_state.get('metodo_definitivo') == "Stevens" else "av"
+    df_curva = st.session_state.get(f'{prefijo_data}_curve', pd.DataFrame())
+
+    partes_firma = [
+        str(numero_reporte),
+        str(perfil.get('estacion', '')),
+        str(perfil.get('codigo', '')),
+        str(perfil.get('fecha', '')),
+        str(st.session_state.get('metodo_definitivo', '')),
+        str(st.session_state.get('banda_error_global', '')),
+        str(st.session_state.get('tipo_paso_geo', '')),
+        str(st.session_state.get('tipo_extrapolacion_geo', '')),
+        str(st.session_state.get('nivel_interes_1', '')),
+        str(st.session_state.get('nivel_interes_2', '')),
+        _hash_dataframe(df_aforos),
+        _hash_dataframe(df_curva),
+        _hash_dataframe(st.session_state.get('df_geo', pd.DataFrame())),
+    ]
+    return hashlib.sha256("|".join(partes_firma).encode("utf-8")).hexdigest()
+
+def _obtener_vigencia_automatica():
+    df_aforos = st.session_state.get('df_aforos_activos', st.session_state.get('df_aforos'))
+    fecha_por_defecto = pd.Timestamp.today().date()
+
+    if df_aforos is None or df_aforos.empty:
+        return fecha_por_defecto, None, True
+
+    col_fecha = next((col for col in df_aforos.columns if "FECHA" in str(col).upper()), None)
+    if not col_fecha:
+        return fecha_por_defecto, None, True
+
+    fechas = pd.to_datetime(df_aforos[col_fecha], errors='coerce', dayfirst=True).dropna()
+    if fechas.empty:
+        return fecha_por_defecto, None, True
+
+    fecha_inicio = fechas.min().date()
+    fecha_fin = fechas.max().date()
+    return fecha_inicio, fecha_fin, False
+
+@st.cache_data(show_spinner=False)
+def generar_reporte_html(numero_reporte, fecha_vigencia_inicio=None, fecha_vigencia_fin=None, vigencia_fin_indefinida=False, firma_reporte=None):
     """Genera un reporte HTML con resultados interactivos, optimizado para impresión A4."""
     from datetime import datetime
     import pandas as pd
@@ -296,6 +359,23 @@ def generar_reporte_html():
     codigo_estacion = st.session_state.get('codigo_estacion', 'Desconocido')
     fecha_perfil = perfil_data.get('fecha', 'No registrada') 
     fecha_reporte = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    logo_b64 = _obtener_logo_base64()
+    logo_html = f'<img class="header-logo" src="data:image/png;base64,{logo_b64}" alt="Logo IDEAM">' if logo_b64 else ''
+    numero_reporte_texto = f"N° de reporte {int(numero_reporte):03d}"
+    if fecha_vigencia_inicio is not None:
+        if hasattr(fecha_vigencia_inicio, "strftime"):
+            fecha_vigencia_inicio_txt = fecha_vigencia_inicio.strftime("%d/%m/%Y")
+        else:
+            fecha_vigencia_inicio_txt = str(fecha_vigencia_inicio)
+    else:
+        fecha_vigencia_inicio_txt = "No definida"
+
+    if vigencia_fin_indefinida or fecha_vigencia_fin is None:
+        fecha_vigencia_fin_txt = "Sin definir"
+    elif hasattr(fecha_vigencia_fin, "strftime"):
+        fecha_vigencia_fin_txt = fecha_vigencia_fin.strftime("%d/%m/%Y")
+    else:
+        fecha_vigencia_fin_txt = str(fecha_vigencia_fin)
     
     # Niveles de Interés, Método H0 y Banda de Error
     niv_1 = st.session_state.get('nivel_interes_1', None)
@@ -413,13 +493,21 @@ def generar_reporte_html():
             body {{ font-family: 'Montserrat', sans-serif; margin: 0; padding: 40px 20px; background: var(--bg); color: #333; }}
             .report-card {{ max-width: 900px; margin: 0 auto; background: white; padding: 50px; border-radius: 15px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); border-top: 10px solid var(--main); }}
             .header {{ border-bottom: 2px solid var(--bg); padding-bottom: 25px; margin-bottom: 35px; display: flex; justify-content: space-between; align-items: flex-start; }}
+            .header-left {{ display: flex; flex-direction: column; gap: 10px; }}
+            .header-right {{ display: flex; flex-direction: column; align-items: flex-end; gap: 10px; text-align: right; }}
+            .report-badge {{ display: inline-flex; align-items: center; align-self: flex-start; padding: 6px 12px; border-radius: 999px; background: rgba(1, 87, 162, 0.08); color: var(--main); font-size: 12px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; }}
             .header h1 {{ margin: 0; font-size: 25px; color: var(--main); text-transform: uppercase; }}
-            .header-info {{ text-align: right; font-size: 12px; font-family: 'Roboto Mono', monospace; color: var(--sec); }}
-            .kpi-container {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 30px; }}
+            .header-info {{ font-size: 12px; font-family: 'Roboto Mono', monospace; color: var(--sec); }}
+            .header-logo {{ max-width: 150px; max-height: 70px; object-fit: contain; display: block; }}
+            .vigencia-strip {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 10px; padding: 5px 16px; border-radius: 12px; background: linear-gradient(90deg, rgba(1, 87, 162, 0.06), rgba(4, 85, 191, 0.03)); border: 1px solid rgba(1, 87, 162, 0.15); }}
+            .vigencia-item {{ display: flex; flex-direction: column; gap: 4px; }}
+            .vigencia-label {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--soft); font-weight: 700; }}
+            .vigencia-value {{ font-size: 15px; color: var(--main); font-weight: 700; }}
+            .kpi-container {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 22px; }}
             .kpi {{ background: #fff; border: 1px solid #eee; padding: 15px; border-radius: 10px; text-align: center; border-bottom: 3px solid var(--bg); }}
             .kpi b {{ display: block; font-size: 12px; color: var(--soft); text-transform: uppercase; margin-bottom: 5px; }}
             .kpi span {{ font-size: 16px; color: var(--main); font-weight: 700; }}
-            .config-box {{ background: #fcfcfc; border-left: 5px solid var(--accent); padding: 20px; border-radius: 5px; margin-bottom: 40px; font-size: 13px; line-height: 1.6; border: 1px solid #eee; }}
+            .config-box {{ background: #fcfcfc; border-left: 5px solid var(--accent); padding: 5px; border-radius: 5px; margin-bottom: 40px; font-size: 13px; line-height: 1.6; border: 1px solid #eee; }}
             .section-title {{ background: var(--bg); color: var(--main); padding: 12px 20px; border-left: 5px solid var(--accent); border-radius: 4px; font-size: 16px; margin-top: 50px; margin-bottom: 25px; text-transform: uppercase; }}
             
             .chart-full-width {{ margin-bottom: 40px; text-align: center; border: 1px solid #eee; padding: 20px; border-radius: 8px; background: #fafafa; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; }}
@@ -505,8 +593,25 @@ def generar_reporte_html():
     <body>
         <div class="report-card">
             <div class="header">
-                <div><h1>Reporte Técnico - Curva de Gasto</h1><div style="color: var(--accent); font-weight: 700; font-size: 23px;">{nombre_estacion}</div></div>
-                <div class="header-info">CÓDIGO: {codigo_estacion}<br>FECHA: {fecha_reporte}</div>
+                <div class="header-left">
+                    <div class="report-badge">{numero_reporte_texto}</div>
+                    <div><h1>Reporte Técnico - Curva de Gasto</h1><div style="color: var(--accent); font-weight: 700; font-size: 23px;">{nombre_estacion} - {codigo_estacion}</div></div>
+                </div>
+                <div class="header-right">
+                    {logo_html}
+                    <div class="header-info">FECHA: {fecha_reporte}</div>
+                </div>
+            </div>
+
+            <div class="vigencia-strip">
+                <div class="vigencia-item">
+                    <div class="vigencia-label">Vigencia inicio</div>
+                    <div class="vigencia-value">{fecha_vigencia_inicio_txt}</div>
+                </div>
+                <div class="vigencia-item">
+                    <div class="vigencia-label">Vigencia final</div>
+                    <div class="vigencia-value">{fecha_vigencia_fin_txt}</div>
+                </div>
             </div>
             
             <div class="kpi-container">
@@ -3649,6 +3754,76 @@ with tab7:
             st.markdown("---")
             st.subheader("📄 Descarga de Reporte Ejecutivo")
 
+            vigencia_auto_inicio, vigencia_auto_fin, vigencia_auto_indefinida = _obtener_vigencia_automatica()
+
+            if "numero_reporte_ejecutivo" not in st.session_state:
+                st.session_state.numero_reporte_ejecutivo = 1
+            if "vigencia_inicio_reporte" not in st.session_state:
+                st.session_state.vigencia_inicio_reporte = vigencia_auto_inicio
+            if "vigencia_fin_reporte" not in st.session_state:
+                st.session_state.vigencia_fin_reporte = vigencia_auto_fin or vigencia_auto_inicio
+            if "vigencia_fin_indefinida_reporte" not in st.session_state:
+                st.session_state.vigencia_fin_indefinida_reporte = vigencia_auto_indefinida
+
+            with st.form("form_config_reporte_ejecutivo"):
+                numero_reporte = st.number_input(
+                    "N° de reporte",
+                    min_value=1,
+                    step=1,
+                    value=int(st.session_state.numero_reporte_ejecutivo),
+                    help="Este número se incluirá en el encabezado del reporte y en el nombre del archivo.",
+                    key="numero_reporte_ejecutivo"
+                )
+
+                st.caption("Las fechas de vigencia se calculan automáticamente desde los aforos activos, pero puedes ajustarlas antes de descargar.")
+                col_v1, col_v2 = st.columns(2)
+                with col_v1:
+                    fecha_vigencia_inicio = st.date_input(
+                        "Fecha de inicio de vigencia",
+                        value=st.session_state.vigencia_inicio_reporte,
+                        format="DD/MM/YYYY",
+                        key="vigencia_inicio_reporte"
+                    )
+                with col_v2:
+                    fecha_vigencia_fin = st.date_input(
+                        "Fecha final de vigencia",
+                        value=st.session_state.vigencia_fin_reporte or vigencia_auto_fin or fecha_vigencia_inicio,
+                        format="DD/MM/YYYY",
+                        key="vigencia_fin_reporte",
+                        disabled=st.session_state.vigencia_fin_indefinida_reporte
+                    )
+
+                vigencia_fin_indefinida = st.checkbox(
+                    "Fecha final indefinida",
+                    value=st.session_state.vigencia_fin_indefinida_reporte,
+                    key="vigencia_fin_indefinida_reporte"
+                )
+
+                if vigencia_fin_indefinida:
+                    st.caption("La curva quedará sin fecha final en el reporte.")
+
+                aplicar_configuracion = st.form_submit_button("Aplicar configuración del reporte", use_container_width=True)
+
+            if aplicar_configuracion:
+                st.success("Configuración del reporte aplicada.")
+
+            numero_reporte = int(numero_reporte)
+            vigencia_fin_indefinida = bool(vigencia_fin_indefinida)
+            fecha_vigencia_fin = None if vigencia_fin_indefinida else fecha_vigencia_fin
+
+            if vigencia_auto_indefinida:
+                st.info(
+                    f"Vigencia automática detectada: inicio {vigencia_auto_inicio.strftime('%d/%m/%Y')} | final sin definir por falta de cierre en los aforos."
+                )
+            else:
+                fin_texto_auto = vigencia_auto_fin.strftime('%d/%m/%Y') if vigencia_auto_fin is not None else "Sin definir"
+                st.caption(f"Vigencia automática detectada: {vigencia_auto_inicio.strftime('%d/%m/%Y')} a {fin_texto_auto}")
+
+            fin_texto_actual = "Sin definir" if vigencia_fin_indefinida or fecha_vigencia_fin is None else fecha_vigencia_fin.strftime('%d/%m/%Y')
+            st.caption(
+                f"Reporte {numero_reporte:03d} | Vigencia actual: {fecha_vigencia_inicio.strftime('%d/%m/%Y')} a {fin_texto_actual}"
+            )
+
             # 1. Extracción segura de variables
             perfil = st.session_state.get('perfil_data', {})
             nombre_estacion = perfil.get('estacion', 'Estacion')
@@ -3656,16 +3831,25 @@ with tab7:
 
             # 2. Nombre del archivo (Usando el datetime.datetime nativo de tu app)
             fecha_hoy = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            nombre_archivo = f"Reporte_{nombre_estacion}_{codigo_estacion}-{fecha_hoy}.html"
+            nombre_archivo = _sanitizar_nombre_archivo(f"Reporte_{int(numero_reporte):03d}_{nombre_estacion}_{codigo_estacion}-{fecha_hoy}.html")
+            firma_reporte = _firma_reporte(numero_reporte)
+            html_reporte = generar_reporte_html(
+                numero_reporte,
+                fecha_vigencia_inicio=fecha_vigencia_inicio,
+                fecha_vigencia_fin=fecha_vigencia_fin,
+                vigencia_fin_indefinida=vigencia_fin_indefinida,
+                firma_reporte=firma_reporte
+            )
 
             # 3. Botón de descarga directo
             st.download_button(
                 label="⬇️ Descargar Reporte Completo (.html)",
-                data=generar_reporte_html(),  
+                data=html_reporte,
                 file_name=nombre_archivo,
                 mime="text/html",
                 use_container_width=True,
-                type="primary" 
+                type="primary",
+                key=f"download_reporte_ejecutivo_{int(numero_reporte):03d}"
             )
 
             st.info("💡 Haz doble clic en el archivo descargado para abrirlo. Podrás interactuar con las gráficas o presionar Ctrl+P (Cmd+P) para imprimir o guardarlo como PDF.")
