@@ -330,7 +330,9 @@ def _parsear_fechas_series(serie):
 
 def _firma_reporte(numero_reporte):
     perfil = st.session_state.get('perfil_data', {}) or {}
-    df_aforos = st.session_state.get('df_aforos_activos') or st.session_state.get('df_aforos', pd.DataFrame())
+    df_aforos = st.session_state.get('df_aforos_activos', pd.DataFrame())
+    if df_aforos.empty:
+        df_aforos = st.session_state.get('df_aforos', pd.DataFrame())
     prefijo_data = "manning" if st.session_state.get('metodo_definitivo') == "Manning" else "stevens" if st.session_state.get('metodo_definitivo') == "Stevens" else "av"
     df_curva = st.session_state.get(f'{prefijo_data}_curve', pd.DataFrame())
 
@@ -436,7 +438,9 @@ def generar_reporte_html(numero_reporte, fecha_vigencia_inicio=None, fecha_vigen
         
     # --- 4. EXTRACCIÓN DE DATOS FALTANTES ---
     # Fallback: usar df_aforos completo si df_aforos_activos no fue inicializado (Tab 1 no interactuado)
-    df_aforos = st.session_state.get('df_aforos_activos') or st.session_state.get('df_aforos', pd.DataFrame())
+    df_aforos = st.session_state.get('df_aforos_activos', pd.DataFrame())
+    if df_aforos.empty:
+        df_aforos = st.session_state.get('df_aforos', pd.DataFrame())
     prefijo_data = "manning" if metodo == "Manning" else "stevens" if metodo == "Stevens" else "av"
     
     df_curva = st.session_state.get(f'{prefijo_data}_curve', pd.DataFrame())
