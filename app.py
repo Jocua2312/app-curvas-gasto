@@ -516,7 +516,7 @@ def generar_reporte_html(numero_reporte, fecha_vigencia_inicio=None, fecha_vigen
     <html lang="es">
     <head>
         <meta charset="UTF-8">
-        <title>Reporte Técnico - {codigo_estacion}</title>
+        <title>{numero_reporte_texto}_Reporte Técnico - {codigo_estacion}</title>
         <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&family=Roboto+Mono&display=swap" rel="stylesheet">
         <style>
             /* REGLA DE ORO: Evitar que el padding expanda el 100% del ancho */
