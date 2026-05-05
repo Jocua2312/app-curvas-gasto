@@ -300,6 +300,34 @@ def _hash_dataframe(df):
     contenido = df.to_csv(index=False).encode("utf-8")
     return hashlib.sha256(contenido).hexdigest()
 
+def _parsear_fechas_series(serie):
+    """Parsea fechas robustamente (texto, datetime y serial Excel)."""
+    if serie is None:
+        return pd.Series(dtype="datetime64[ns]")
+
+    serie_base = pd.Series(serie)
+
+    # Heurística: detectar si el archivo viene principalmente como dd/mm o mm/dd.
+    serie_texto = serie_base.astype(str).str.strip()
+    extraido = serie_texto.str.extract(r"^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})")
+    dia_1 = pd.to_numeric(extraido[0], errors='coerce')
+    dia_2 = pd.to_numeric(extraido[1], errors='coerce')
+
+    votos_dayfirst = ((dia_1 > 12) & (dia_2 <= 12)).sum()
+    votos_monthfirst = ((dia_2 > 12) & (dia_1 <= 12)).sum()
+    usar_dayfirst = votos_monthfirst <= votos_dayfirst
+
+    fechas = pd.to_datetime(serie_base, errors='coerce', dayfirst=usar_dayfirst)
+
+    # Segunda pasada: números seriales de Excel (ej. 45291).
+    numeric_vals = pd.to_numeric(serie_texto.str.replace(',', '.', regex=False), errors='coerce')
+    mask_serial = fechas.isna() & numeric_vals.notna() & numeric_vals.between(20000, 70000)
+    if mask_serial.any():
+        fechas_serial = pd.to_datetime(numeric_vals[mask_serial], unit='D', origin='1899-12-30', errors='coerce')
+        fechas.loc[mask_serial] = fechas_serial
+
+    return fechas
+
 def _firma_reporte(numero_reporte):
     perfil = st.session_state.get('perfil_data', {}) or {}
     df_aforos = st.session_state.get('df_aforos_activos', pd.DataFrame())
@@ -334,7 +362,7 @@ def _obtener_vigencia_automatica():
     if not col_fecha:
         return fecha_por_defecto, None, True
 
-    fechas = pd.to_datetime(df_aforos[col_fecha], errors='coerce', dayfirst=True).dropna()
+    fechas = _parsear_fechas_series(df_aforos[col_fecha]).dropna()
     if fechas.empty:
         return fecha_por_defecto, None, True
 
@@ -931,7 +959,7 @@ def normalizar_valor_cargado(clave, valor):
             nombre_col = str(col).upper()
             es_fecha = "FECHA" in nombre_col or pd.api.types.is_datetime64_any_dtype(df_norm[col])
             if es_fecha:
-                df_norm[col] = pd.to_datetime(df_norm[col], errors='coerce').dt.date
+                df_norm[col] = _parsear_fechas_series(df_norm[col]).dt.date
         return df_norm
 
     return valor
@@ -1044,6 +1072,14 @@ if file_aforos is not None and st.session_state.df_aforos is None:
                     nombres_finales.append(col)
             
             df_aforos.columns = nombres_finales
+
+            col_fecha_aforo = next((col for col in df_aforos.columns if "FECHA" in str(col).upper()), None)
+            if col_fecha_aforo:
+                fechas_parseadas = _parsear_fechas_series(df_aforos[col_fecha_aforo])
+                invalidas = int(fechas_parseadas.isna().sum())
+                if invalidas > 0:
+                    st.sidebar.warning(f"Se detectaron {invalidas} fechas no válidas en aforos y se dejaron vacías.")
+                df_aforos[col_fecha_aforo] = fechas_parseadas.dt.date
             
             # Convertir a numérico
             df_aforos["H_m"] = pd.to_numeric(df_aforos["NIVEL MEDIO (cms)"], errors='coerce') / 100.0
@@ -1102,7 +1138,7 @@ with tab1:
         col_fecha = next((col for col in df.columns if "FECHA" in str(col).upper()), None)
 
         if col_fecha:
-            fechas_validas = pd.to_datetime(df[col_fecha], errors='coerce', dayfirst=True).dropna()
+            fechas_validas = _parsear_fechas_series(df[col_fecha]).dropna()
             
             if not fechas_validas.empty:
                 min_date = fechas_validas.min().date()
@@ -1126,7 +1162,7 @@ with tab1:
                     st.error("⚠️ La fecha de inicio no puede ser mayor a la fecha de fin.")
                     df_mostrar_temp = st.session_state.temp_aforos_activos
                 else:
-                    fechas_temp = pd.to_datetime(st.session_state.temp_aforos_activos[col_fecha], errors='coerce', dayfirst=True)
+                    fechas_temp = _parsear_fechas_series(st.session_state.temp_aforos_activos[col_fecha])
                     mask_fecha = (fechas_temp.dt.date >= f_inicio) & \
                                  (fechas_temp.dt.date <= f_fin)
                     df_mostrar_temp = st.session_state.temp_aforos_activos[mask_fecha]
