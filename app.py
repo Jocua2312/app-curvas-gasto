@@ -525,7 +525,7 @@ def generar_reporte_html(numero_reporte, fecha_vigencia_inicio=None, fecha_vigen
             :root {{ --main: {c_main}; --sec: {c_sec}; --accent: {c_accent}; --bg: {c_bg}; --soft: {c_soft}; }}
             body {{ font-family: 'Montserrat', sans-serif; margin: 0; padding: 40px 20px; background: var(--bg); color: #333; }}
             .report-card {{ max-width: 900px; margin: 0 auto; background: white; padding: 50px; border-radius: 15px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); border-top: 10px solid var(--main); }}
-            .header {{ border-bottom: 2px solid var(--bg); padding-bottom: 25px; margin-bottom: 35px; display: flex; justify-content: space-between; align-items: flex-start; }}
+            .header {{ border-bottom: 2px solid var(--bg); padding-bottom: 25px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: flex-start; }}
             .header-left {{ display: flex; flex-direction: column; gap: 10px; }}
             .header-right {{ display: flex; flex-direction: column; align-items: flex-end; gap: 10px; text-align: right; }}
             .report-badge {{ display: inline-flex; align-items: center; align-self: flex-start; padding: 6px 12px; border-radius: 999px; background: rgba(1, 87, 162, 0.08); color: var(--main); font-size: 12px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; }}
