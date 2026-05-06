@@ -414,6 +414,7 @@ def generar_reporte_html(numero_reporte, fecha_vigencia_inicio=None, fecha_vigen
         
     # Extraemos la fuente del H0 específicamente para el método definitivo
     metodo_h0 = st.session_state.get('h0_fuentes', {}).get(metodo, 'No aplicado')
+    usar_h0_global = st.session_state.get('usar_h0_global', True)
     
     # Banda de error global
     banda_error = st.session_state.get('banda_error_global', np.nan)
@@ -446,7 +447,10 @@ def generar_reporte_html(numero_reporte, fecha_vigencia_inicio=None, fecha_vigen
     df_curva = st.session_state.get(f'{prefijo_data}_curve', pd.DataFrame())
     error_mape = st.session_state.get(f'{prefijo_data}_error', np.nan)
     error_sigma = st.session_state.get(f'{prefijo_data}_error_sigma', np.nan)
-    h0 = st.session_state.get('h0_seleccionados', {}).get(metodo, None)
+    h0 = st.session_state.get('h0_seleccionados', {}).get(metodo, None) if usar_h0_global else None
+    if not usar_h0_global:
+        metodo_h0 = "No usado"
+    h0_text = f"{h0:.3f} m" if (h0 is not None and usar_h0_global) else ("No usado" if not usar_h0_global else "No aplicado")
     
     f_curva = interp1d(df_curva['H'], df_curva['Q'], kind='linear', fill_value='extrapolate', bounds_error=False) if not df_curva.empty else None
 
@@ -457,7 +461,7 @@ def generar_reporte_html(numero_reporte, fecha_vigencia_inicio=None, fecha_vigen
         q_est = f_curva(h_vals) 
         with np.errstate(divide='ignore', invalid='ignore'):
             err_pct = np.where(q_obs != 0, np.abs(q_est - q_obs) / q_obs * 100, np.nan)
-        if h0 is not None:
+        if h0 is not None and usar_h0_global:
             err_pct = np.where(h_vals <= h0, np.nan, err_pct)
         df_errores = pd.DataFrame({'H (m)': h_vals, 'Q Aforado (m³/s)': q_obs, 'Error (%)': err_pct}).sort_values('H (m)').reset_index(drop=True)
     else:
@@ -479,7 +483,7 @@ def generar_reporte_html(numero_reporte, fecha_vigencia_inicio=None, fecha_vigen
         fig_curva.add_trace(go.Scatter(x=df_curva['Q'].values, y=df_curva['H'].values, mode='lines', name='Curva', line=dict(color='#A68A56', width=3)))
         if not df_aforos.empty:
             fig_curva.add_trace(go.Scatter(x=df_aforos['CAUDAL TOTAL (m3/s)'], y=df_aforos['H_m'], mode='markers', name='Aforos', marker=dict(color='#034C8C', size=8)))
-        if h0 is not None:
+        if h0 is not None and usar_h0_global:
             fig_curva.add_trace(go.Scatter(x=[0], y=[h0], mode='markers', name=f'H0 = {h0:.3f} m', marker=dict(color='red', size=10, symbol='star')))
             
         if niv_1 is not None and niv_2 is not None:
@@ -516,7 +520,7 @@ def generar_reporte_html(numero_reporte, fecha_vigencia_inicio=None, fecha_vigen
     <html lang="es">
     <head>
         <meta charset="UTF-8">
-        <title>{numero_reporte_texto}_Reporte Técnico - {codigo_estacion}</title>
+        <title>{numero_reporte_texto}_{nombre_estacion} - {codigo_estacion}</title>
         <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&family=Roboto+Mono&display=swap" rel="stylesheet">
         <style>
             /* REGLA DE ORO: Evitar que el padding expanda el 100% del ancho */
@@ -658,7 +662,7 @@ def generar_reporte_html(numero_reporte, fecha_vigencia_inicio=None, fecha_vigen
                 <div><strong>Modelo Matemático:</strong> {modelo_usado}</div>
                 <div style="margin-top: 8px;"><strong>Parámetros Geométricos:</strong> {modo_muro} | {paso_texto}</div>
                 <div style="margin-top: 8px;"><strong>Fecha del Perfil:</strong> {fecha_perfil}</div>
-                <div style="margin-top: 8px;"><strong>Nivel H0:</strong> {f"{h0:.3f} m" if h0 is not None else "No definido"} (Método: {metodo_h0})</div>
+                <div style="margin-top: 8px;"><strong>Nivel H0:</strong> {h0_text} (Método: {metodo_h0})</div>
                 <div style="margin-top: 8px;"><strong>Niveles de Análisis:</strong> {texto_niveles}</div>
             </div>
 
@@ -928,7 +932,19 @@ with st.sidebar:
             'manning_error_sigma', 'stevens_error_sigma', 'av_error_sigma',
             'manning_edited_df', 'stevens_edited_df', 'av_edited_df',
             'temp_aforos_activos', 'temp_perfil_activos', 'perfil_puntos_activos',
-            'df_aforos_activos', 'h0_seleccionados', 'metodo_definitivo',"Curva_selec", "usar_auto"
+            'df_aforos_activos', 'last_df_size', 'codigo_estacion',
+            'h0_seleccionados', 'h0_fuentes', 'usar_h0_global',
+            'metodo_definitivo', 'metodo_select_manning', 'metodo_select_stevens', 'metodo_select_av',
+            'Curva_selec',
+            'fuente_k_radio', 'fuente_k_radio_s', 'fuente_k_stevens', 'fuente_v_radio',
+            'tipo_extrapolacion_geo', 'usar_auto_geo', 'H_max_manual_geo',
+            'tipo_paso_geo', 'paso_fijo_geo', 'paso_fino_geo', 'paso_grueso_geo',
+            'opts_modelos_man', 'opts_modelos_stevens', 'opts_modelos_av',
+            'manning_h_quiebre', 'manning_modelo_inf', 'manning_modelo_sup',
+            'stevens_h_quiebre', 'stevens_modelo_inf', 'stevens_modelo_sup',
+            'av_h_quiebre', 'av_modelo_inf', 'av_modelo_sup',
+            'numero_reporte_ejecutivo', 'vigencia_inicio_reporte', 'vigencia_fin_reporte', 'vigencia_fin_indefinida_reporte',
+            'banda_error_global'
         ]
         for key in keys_to_reset:
             if key in st.session_state:
@@ -940,7 +956,7 @@ with st.sidebar:
 # ==========================================
 def normalizar_valor_cargado(clave, valor):
     """Normaliza valores restaurados para evitar incompatibilidades de widgets."""
-    if clave in ("fecha_inicio", "fecha_fin"):
+    if clave in ("fecha_inicio", "fecha_fin", "vigencia_inicio_reporte", "vigencia_fin_reporte"):
         if valor is None:
             return None
         try:
@@ -971,6 +987,20 @@ def normalizar_valor_cargado(clave, valor):
 
 with st.sidebar.expander("💾 Guardar / Cargar Proyecto", expanded=False):
     st.markdown("Guarda tu progreso actual o carga un análisis previo.")
+
+    claves_alias_carga = {
+        "tipo_paso": "tipo_paso_geo",
+        "paso_fijo": "paso_fijo_geo",
+        "paso_fino": "paso_fino_geo",
+        "paso_grueso": "paso_grueso_geo",
+        "usar_auto": "usar_auto_geo",
+        "H_max_manual": "H_max_manual_geo",
+        "vigencia_inicio": "vigencia_inicio_reporte",
+        "vigencia_fin": "vigencia_fin_reporte",
+        "vigencia_fin_indefinida": "vigencia_fin_indefinida_reporte",
+        "numero_reporte": "numero_reporte_ejecutivo",
+        "fuente_k_stevens": "fuente_k_radio_s",
+    }
     
     # --- 1. BOTÓN PARA GUARDAR (EXPORTAR) ---
     # AMPLIAMOS ESTA LISTA para incluir TODO tu progreso (Manning, Stevens, temporales, etc.)
@@ -981,14 +1011,17 @@ with st.sidebar.expander("💾 Guardar / Cargar Proyecto", expanded=False):
         'manning_data', 'manning_curve', 'manning_error', 'manning_error_sigma', 'manning_edited_df', 'opts_modelos_man',
         'stevens_data', 'stevens_curve', 'stevens_error', 'stevens_error_sigma', 'stevens_edited_df',
         'av_data', 'av_curve', 'av_error', 'av_error_sigma', 'av_edited_df',
-        'h0_seleccionados', 'metodo_definitivo',
-        'fecha_inicio', 'fecha_fin', 'fuente_k_radio','fuente_k_stevens','fuente_v_radio',
-        'metodo_select_manning','metodo_select_stevens', 'metodo_select_av',
-        'tipo_paso', 'paso_fijo','paso_fino','paso_grueso',
-        'usar_auto','H_max_manual','banda_error_global', "Curva_selec", 
+        'h0_seleccionados', 'h0_fuentes', 'usar_h0_global', 'metodo_definitivo',
+        'fecha_inicio', 'fecha_fin', 'fuente_k_radio', 'fuente_k_radio_s', 'fuente_v_radio',
+        'metodo_select_manning', 'metodo_select_stevens', 'metodo_select_av',
+        'opts_modelos_stevens',
+        'tipo_extrapolacion_geo', 'usar_auto_geo', 'H_max_manual_geo',
+        'tipo_paso_geo', 'paso_fijo_geo','paso_fino_geo','paso_grueso_geo',
+        'banda_error_global', "Curva_selec", 
         'manning_h_quiebre', 'manning_modelo_inf', 'manning_modelo_sup',
         'stevens_h_quiebre', 'stevens_modelo_inf', 'stevens_modelo_sup',
         'av_h_quiebre', 'av_modelo_inf', 'av_modelo_sup', 'nivel_interes_1', 'nivel_interes_2',
+        'numero_reporte_ejecutivo', 'vigencia_inicio_reporte', 'vigencia_fin_reporte', 'vigencia_fin_indefinida_reporte',
         # Añade también las claves de los radios de H0 si decides mantenerlas
     ]
     
@@ -1027,6 +1060,10 @@ with st.sidebar.expander("💾 Guardar / Cargar Proyecto", expanded=False):
             try:
                 datos_cargados = pickle.loads(archivo_subido.getvalue())
                 errores_carga = []
+
+                for clave_legacy, clave_actual in claves_alias_carga.items():
+                    if clave_legacy in datos_cargados and clave_actual not in datos_cargados:
+                        datos_cargados[clave_actual] = datos_cargados[clave_legacy]
 
                 for clave, valor in datos_cargados.items():
                     try:
@@ -3539,7 +3576,24 @@ with tab6:
                             st.session_state.h0_seleccionados[metodo] = john_val
                             st.session_state.h0_fuentes[metodo] = "Johnson" # NUEVO
 
-        st.success("✅ Selecciones guardadas en memoria para aplicar a los cálculos finales.")
+        st.markdown("---")
+        st.subheader("Uso de H0 en resultados")
+        st.caption("Activa o desactiva el uso del H0 calculado en la comparación de métodos y en la exportación de la curva definitiva.")
+
+        if 'usar_h0_global' not in st.session_state:
+            st.session_state.usar_h0_global = True
+
+        col_left, col_right = st.columns([1, 3])
+        with col_left:
+            st.session_state.usar_h0_global = st.checkbox(
+                "Usar H0 en cálculos y exportaciones",
+                value=st.session_state.usar_h0_global,
+                key="usar_h0_global_tab6"
+            )
+        with col_right:
+            st.write("Activa o desactiva el uso del H₀ calculado en la comparación de métodos y en la exportación de la curva definitiva.")
+
+        st.success("✅ Preferencia de uso de H0 guardada en memoria de sesión.")
 
         # --- TABLAS DETALLADAS OCULTAS ---
         st.markdown("---")
@@ -3589,14 +3643,15 @@ with tab7:
             # Obtener los H0 y sus fuentes
             h0_dict = st.session_state.get('h0_seleccionados', {})
             h0_fuentes = st.session_state.get('h0_fuentes', {}) 
+            usar_h0_global = st.session_state.get('usar_h0_global', True)
 
-            h0_man = h0_dict.get('Manning', None)
-            h0_ste = h0_dict.get('Stevens', None)
-            h0_av = h0_dict.get('Área-Velocidad', None)
+            h0_man = h0_dict.get('Manning', None) if usar_h0_global else None
+            h0_ste = h0_dict.get('Stevens', None) if usar_h0_global else None
+            h0_av = h0_dict.get('Área-Velocidad', None) if usar_h0_global else None
             
-            fuente_man = h0_fuentes.get('Manning', '') 
-            fuente_ste = h0_fuentes.get('Stevens', '') 
-            fuente_av = h0_fuentes.get('Área-Velocidad', '') 
+            fuente_man = h0_fuentes.get('Manning', '') if usar_h0_global else ''
+            fuente_ste = h0_fuentes.get('Stevens', '') if usar_h0_global else ''
+            fuente_av = h0_fuentes.get('Área-Velocidad', '') if usar_h0_global else ''
 
             if 'df_aforos_activos' in st.session_state:
                 df_aforos_comp = st.session_state.df_aforos_activos
@@ -3765,11 +3820,22 @@ with tab7:
                 df_export = df_export.rename(columns={col_map[metodo_definitivo]: "Q (m³/s)"})
                 df_export = df_export[["H (cm)", "Q (m³/s)"]] # Filtramos para exportar solo cm y caudal
                 
-                # 4. Redondear (cm a 1 decimal o 0 si prefieres enteros, y Q a 3 decimales)
+                # 4. Aplicar H0 solo si está habilitado (según preferencia global)
+                h0_dict = st.session_state.get('h0_seleccionados', {})
+                h0_actual = h0_dict.get(metodo_definitivo, None)
+                usar_h0 = st.session_state.get('usar_h0_global', True)
+
+                if pd.notna(h0_actual) and h0_actual is not None and usar_h0:
+                    h0_cm = h0_actual * 100
+                    df_export = df_export[df_export["H (cm)"] >= h0_cm].copy()
+                    h0_row = pd.DataFrame({"H (cm)": [h0_cm], "Q (m³/s)": [0.0]})
+                    df_export = pd.concat([h0_row, df_export], ignore_index=True)
+
+                # 5. Redondear (cm a 1 decimal o 0 si prefieres enteros, y Q a 3 decimales)
                 df_export = df_export.round({"H (cm)": 1, "Q (m³/s)": 3})
                 csv_export = df_export.to_csv(index=False).encode('utf-8')
                 
-                # 5. Obtener el código/nombre de la estación y la fecha para el nombre del archivo
+                # 6. Obtener el código/nombre de la estación y la fecha para el nombre del archivo
                 import datetime
                 estacion_codigo = "Estacion_Desconocida"
                 if st.session_state.get('perfil_data'):
