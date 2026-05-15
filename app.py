@@ -2309,6 +2309,35 @@ with tab3:
             
             # Identificar qué columnas contienen la palabra "Error"
             cols_error = [col for col in df_errores.columns if "Error" in col]
+
+            def clasificar_semaforo_error(valor):
+                if pd.isna(valor):
+                    return "Sin dato"
+                try:
+                    v = float(valor)
+                except:
+                    return "Sin dato"
+                if v <= 20:
+                    return "Verde (<= 20%)"
+                if v <= 30:
+                    return "Amarillo (> 20% y <= 30%)"
+                return "Rojo (> 30%)"
+
+            def color_semaforo_etiqueta(valor):
+                if valor == "Verde (<= 20%)":
+                    return 'background-color: rgba(39, 174, 96, 0.4); color: white;'
+                if valor == "Amarillo (> 20% y <= 30%)":
+                    return 'background-color: rgba(243, 156, 18, 0.4); color: white;'
+                if valor == "Rojo (> 30%)":
+                    return 'background-color: rgba(192, 57, 43, 0.4); color: white;'
+                return ''
+
+            if cols_error:
+                df_errores["Semáforo"] = df_errores[cols_error].max(axis=1, skipna=True).apply(clasificar_semaforo_error)
+            else:
+                df_errores["Semáforo"] = "Sin dato"
+
+            st.caption("Semáforo de error: Verde = Error <= 20%, Amarillo = Error > 20% y <= 30%, Rojo = Error > 30%.")
             
             # Función para aplicar la regla de color semáforo
             def color_semaforo(val):
@@ -2331,7 +2360,7 @@ with tab3:
                 format_dict[c] = "{:.1f}"
                 
             # Aplicar formato numérico y aplicar colores solo a las columnas de error
-            styled_df = df_errores.style.format(format_dict).map(color_semaforo, subset=cols_error)
+            styled_df = df_errores.style.format(format_dict).map(color_semaforo, subset=cols_error).map(color_semaforo_etiqueta, subset=["Semáforo"])
             
             st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
@@ -2959,6 +2988,13 @@ with tab4:
             
             # Identificar qué columnas contienen la palabra "Error"
             cols_error_s = [col for col in df_errores_s.columns if "Error" in col]
+
+            if cols_error_s:
+                df_errores_s["Semáforo"] = df_errores_s[cols_error_s].max(axis=1, skipna=True).apply(clasificar_semaforo_error)
+            else:
+                df_errores_s["Semáforo"] = "Sin dato"
+
+            st.caption("Semáforo de error: Verde = Error <= 20%, Amarillo = Error > 20% y <= 30%, Rojo = Error > 30%.")
             
             # Función para aplicar la regla de color semáforo
             def color_semaforo_s(val):
@@ -2981,7 +3017,7 @@ with tab4:
                 format_dict_s[c] = "{:.1f}"
                 
             # Aplicar formato numérico y aplicar colores solo a las columnas de error
-            styled_df_s = df_errores_s.style.format(format_dict_s).map(color_semaforo_s, subset=cols_error_s)
+            styled_df_s = df_errores_s.style.format(format_dict_s).map(color_semaforo_s, subset=cols_error_s).map(color_semaforo_etiqueta, subset=["Semáforo"])
             
             st.dataframe(styled_df_s, use_container_width=True, hide_index=True)
 
@@ -3505,6 +3541,13 @@ with tab5:
             
             # Identificar qué columnas contienen la palabra "Error"
             cols_error_av = [col for col in df_errores_av.columns if "Error" in col]
+
+            if cols_error_av:
+                df_errores_av["Semáforo"] = df_errores_av[cols_error_av].max(axis=1, skipna=True).apply(clasificar_semaforo_error)
+            else:
+                df_errores_av["Semáforo"] = "Sin dato"
+
+            st.caption("Semáforo de error: Verde = Error <= 20%, Amarillo = Error > 20% y <= 30%, Rojo = Error > 30%.")
             
             # Función para aplicar la regla de color semáforo
             def color_semaforo_av(val):
@@ -3526,7 +3569,7 @@ with tab5:
                 format_dict_av[c] = "{:.1f}"
                 
             # Aplicar formato numérico y aplicar colores solo a las columnas de error
-            styled_df_av = df_errores_av.style.format(format_dict_av).map(color_semaforo_av, subset=cols_error_av)
+            styled_df_av = df_errores_av.style.format(format_dict_av).map(color_semaforo_av, subset=cols_error_av).map(color_semaforo_etiqueta, subset=["Semáforo"])
             
             st.dataframe(styled_df_av, use_container_width=True, hide_index=True)
 
@@ -3851,9 +3894,9 @@ with tab7:
             col_p1, col_p2 = st.columns(2)
             with col_p1:
                 # Quitamos el 'value' y ponemos el 'key' para que Streamlit lo maneje automáticamente
-                nivel_interes_1 = st.number_input("Nivel 1 (Aguas bajas/P25):", step=0.1, format="%.3f", key="nivel_interes_1")
+                nivel_interes_1 = st.number_input("Nivel 1 (Aguas bajas/P75):", step=0.1, format="%.3f", key="nivel_interes_1")
             with col_p2:
-                nivel_interes_2 = st.number_input("Nivel 2 (Aguas altas/P75):", step=0.1, format="%.3f", key="nivel_interes_2")
+                nivel_interes_2 = st.number_input("Nivel 2 (Aguas altas/P25):", step=0.1, format="%.3f", key="nivel_interes_2")
 
             st.markdown("---")
             col1, col2, col3 = st.columns(3)
