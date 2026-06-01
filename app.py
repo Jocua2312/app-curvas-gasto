@@ -29,6 +29,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+def _preparar_dataframe_para_editor(df, columnas_preservadas=None):
+    """Normaliza columnas tipo object/string para que Streamlit no falle al convertir a Arrow."""
+    df_editor = df.copy()
+    columnas_preservadas = set(columnas_preservadas or [])
+
+    for columna in df_editor.columns:
+        if columna in columnas_preservadas:
+            continue
+
+        serie = df_editor[columna]
+        if pd.api.types.is_object_dtype(serie) or pd.api.types.is_string_dtype(serie):
+            df_editor[columna] = serie.astype("string")
+
+    return df_editor
+
 # Configuración de página a pantalla completa
 st.set_page_config(page_title="Curva de Gasto", layout="wide")
 
@@ -1280,18 +1296,19 @@ with tab1:
 
         # --- AQUÍ EMPIEZA LA MAGIA DEL FORMULARIO PARA AFOROS ---
         columnas_protegidas = [col for col in df_mostrar_temp.columns if col != "Activo"]
+        df_editor_temp = _preparar_dataframe_para_editor(df_mostrar_temp, columnas_preservadas=[col_fecha] if col_fecha else [])
         
         with st.form("form_edicion_aforos"):
             # 4. Editor interactivo dentro del formulario (no recarga al hacer clic)
             edited_temp = st.data_editor(
-                df_mostrar_temp,
+                df_editor_temp,
                 column_config={
                     "Activo": st.column_config.CheckboxColumn("Activo", default=True),
                     col_fecha: st.column_config.DateColumn("Fecha", format="DD/MM/YYYY") if col_fecha else None
                 },
                 disabled=columnas_protegidas,
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 key="editor_aforos_temp"
             )
 
@@ -1337,6 +1354,7 @@ with tab1:
 
         df_perfil_edit = df_perfil_puntos.copy()
         df_perfil_edit['Activo'] = st.session_state.temp_perfil_activos
+        df_perfil_edit = _preparar_dataframe_para_editor(df_perfil_edit)
 
         # --- AQUÍ APLICAMOS EL MISMO FORMULARIO PARA EL PERFIL ---
         with st.form("form_edicion_perfil"):
@@ -1351,7 +1369,7 @@ with tab1:
                 },
                 disabled=False,
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 key="perfil_puntos_editor_temp"
             )
 
@@ -1859,7 +1877,7 @@ with tab3:
                 with st.form(key="manning_form"):
                     st.caption("Filtro de Aforos")
                     edited = st.data_editor(
-                        st.session_state.manning_edited_df[["Incluir", "ID", "H", "Q"]],
+                        _preparar_dataframe_para_editor(st.session_state.manning_edited_df[["Incluir", "ID", "H", "Q"]]),
                         column_config={
                             "Incluir": st.column_config.CheckboxColumn("Activo", default=True),
                             "ID": st.column_config.NumberColumn("ID", disabled=True),
@@ -1868,7 +1886,7 @@ with tab3:
                         },
                         disabled=False,
                         hide_index=True,
-                        use_container_width=True,
+                        width="stretch",
                         key="manning_editor"
                     )
 
@@ -2544,7 +2562,7 @@ with tab4:
                 with st.form(key="stevens_form"):
                     st.caption("Filtro de Aforos")
                     edited_s = st.data_editor(
-                        st.session_state.stevens_edited_df[["Incluir", "ID", "H", "Q"]],
+                        _preparar_dataframe_para_editor(st.session_state.stevens_edited_df[["Incluir", "ID", "H", "Q"]]),
                         column_config={
                             "Incluir": st.column_config.CheckboxColumn("Activo", default=True),
                             "ID": st.column_config.NumberColumn("ID", disabled=True),
@@ -2553,7 +2571,7 @@ with tab4:
                         },
                         disabled=False,
                         hide_index=True,
-                        use_container_width=True,
+                        width="stretch",
                         key="stevens_editor"
                     )
 
@@ -3030,17 +3048,17 @@ with tab5:
         with st.expander("📘 **Fundamento y consideraciones del método Área-Velocidad**", expanded=False):
             st.markdown("""
             **Fundamento:** Este método se basa directamente en la ecuación de continuidad:  
-            \( Q = V * A \)  
+            $Q = V * A$  
             donde:
-            - \( Q \): caudal (m³/s)
-            - \( V \): velocidad media (m/s)
-            - \( A \): área mojada (m²)
+            - $Q$: caudal (m³/s)
+            - $V$: velocidad media (m/s)
+            - $A$: área mojada (m²)
 
             Su aplicación requiere un buen conocimiento del comportamiento hidráulico y las características geométricas del río, así como contar con aforos que cubran los estados medios y altos.
 
             A diferencia de los métodos de Manning y Stevens, que buscan constantes de rugosidad, este método separa los componentes del caudal:
             - El **área** se obtiene exclusivamente de la topografía (geometría de la sección).
-            - La **velocidad** se extrapola a partir de los aforos disponibles, ajustando modelos matemáticos (lineal, exponencial, logarítmico o potencial) en función del nivel \( H \).
+            - La **velocidad** se extrapola a partir de los aforos disponibles, ajustando modelos matemáticos (lineal, exponencial, logarítmico o potencial) en función del nivel $H$.
 
             **Referencias bibliográficas:**
             - Chaparro Villamizar, N., & Contreras T., C. Y. (1992). *Extrapolación Curvas de Gastos*. Instituto de Hidrología, Meteorología y Estudios Ambientales (IDEAM). Santafé de Bogotá, D.C.
@@ -3140,14 +3158,14 @@ with tab5:
                 with st.form(key="av_form"):
                     st.caption("Filtro de Aforos")
                     edited_av = st.data_editor(
-                        st.session_state.av_edited_df[["Incluir", "ID", "H", "Q"]],
+                        _preparar_dataframe_para_editor(st.session_state.av_edited_df[["Incluir", "ID", "H", "Q"]]),
                         column_config={
                             "Incluir": st.column_config.CheckboxColumn("Activo", default=True),
                             "ID": st.column_config.NumberColumn("ID", disabled=True),
                             "H": st.column_config.NumberColumn("H (m)", disabled=True, format="%.2f"),
                             "Q": st.column_config.NumberColumn("Q (m³/s)", disabled=True, format="%.2f"),
                         },
-                        disabled=False, hide_index=True, use_container_width=True, key="av_editor"
+                        disabled=False, hide_index=True, width="stretch", key="av_editor"
                     )
 
                     st.caption("Modelos de ajuste")
