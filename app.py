@@ -45,6 +45,32 @@ def _preparar_dataframe_para_editor(df, columnas_preservadas=None):
 
     return df_editor
 
+
+def _extraer_numero(valor):
+    """Convierte valores como '6.60 m' o '1,23' a float; devuelve NaN si no puede."""
+    if pd.isna(valor):
+        return np.nan
+
+    if isinstance(valor, (int, float, np.integer, np.floating)):
+        return float(valor)
+
+    texto = str(valor).strip().replace(",", ".")
+    coincidencia = re.search(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", texto)
+    if coincidencia:
+        try:
+            return float(coincidencia.group(0))
+        except ValueError:
+            return np.nan
+
+    return np.nan
+
+
+def _normalizar_columna_numerica(df, columna):
+    """Aplica extracción numérica segura a una columna existente del DataFrame."""
+    if columna in df.columns:
+        df[columna] = df[columna].map(_extraer_numero)
+    return df
+
 # Configuración de página a pantalla completa
 st.set_page_config(page_title="Curva de Gasto", layout="wide")
 
@@ -1200,6 +1226,13 @@ if file_aforos is not None and st.session_state.df_aforos is None:
                 if invalidas > 0:
                     st.sidebar.warning(f"Se detectaron {invalidas} fechas no válidas en aforos y se dejaron vacías.")
                 df_aforos[col_fecha_aforo] = fechas_parseadas.dt.date
+
+            col_v_aforo = buscar_columna(df_aforos.columns, ["VELOC", "MEDIA"])
+            col_rh_aforo = buscar_columna(df_aforos.columns, ["RH"])
+            if col_v_aforo:
+                df_aforos = _normalizar_columna_numerica(df_aforos, col_v_aforo)
+            if col_rh_aforo:
+                df_aforos = _normalizar_columna_numerica(df_aforos, col_rh_aforo)
             
             # Convertir a numérico
             df_aforos["H_m"] = pd.to_numeric(df_aforos["NIVEL MEDIO (cms)"], errors='coerce') / 100.0
@@ -1806,8 +1839,8 @@ with tab3:
                     R23_per = (A_per / P_per) ** (2/3)
                     K_per = (Q / A_per) / R23_per if R23_per > 0 else 0
                 
-                v_af = row.get(col_v, np.nan)
-                rh = row.get(col_rh, np.nan)
+                v_af = _extraer_numero(row.get(col_v, np.nan))
+                rh = _extraer_numero(row.get(col_rh, np.nan))
                 
                 K_af = 0
                 r23_af = np.nan
@@ -2492,8 +2525,8 @@ with tab4:
                     K_per = Q / X_per if X_per > 0 else 0
                 
                 # --- Cálculo de K de aforos (Stevens) ---
-                A_af = row.get(col_area_af, np.nan)
-                D_af = row.get(col_d_af, np.nan)
+                A_af = _extraer_numero(row.get(col_area_af, np.nan))
+                D_af = _extraer_numero(row.get(col_d_af, np.nan))
                 
                 K_af = 0
                 X_af = np.nan
@@ -3135,9 +3168,9 @@ with tab5:
 
         df_edit_av = st.session_state.av_data.copy()
         if fuente_v == "Velocidad de aforos":
-            df_edit_av["V"] = df_edit_av["V_af"]
+            df_edit_av["V"] = df_edit_av["V_af"].map(_extraer_numero)
         else:
-            df_edit_av["V"] = df_edit_av["V_per"]
+            df_edit_av["V"] = df_edit_av["V_per"].map(_extraer_numero)
 
         # --- Persistencia ---
         if 'av_edited_df' not in st.session_state:
@@ -3221,11 +3254,11 @@ with tab5:
         inactivos_av = df_original_av[df_original_av["ID"].isin(ids_inactivos)].copy()
 
         if fuente_v == "Velocidad de aforos":
-            activos_av["V"] = activos_av["V_af"]
-            inactivos_av["V"] = inactivos_av["V_af"]
+            activos_av["V"] = activos_av["V_af"].map(_extraer_numero)
+            inactivos_av["V"] = inactivos_av["V_af"].map(_extraer_numero)
         else:
-            activos_av["V"] = activos_av["V_per"]
-            inactivos_av["V"] = inactivos_av["V_per"]
+            activos_av["V"] = activos_av["V_per"].map(_extraer_numero)
+            inactivos_av["V"] = inactivos_av["V_per"].map(_extraer_numero)
 
         activos_av = activos_av[activos_av["V"] > 0].dropna(subset=["V"])
         inactivos_av = inactivos_av[inactivos_av["V"] > 0].dropna(subset=["V"])
