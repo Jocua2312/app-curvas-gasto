@@ -387,6 +387,37 @@ def _hash_dataframe(df):
     contenido = df.to_csv(index=False).encode("utf-8")
     return hashlib.sha256(contenido).hexdigest()
 
+def _obtener_df_aforos_para_metodo(metodo=None):
+    metodo = metodo or st.session_state.get('metodo_definitivo', '')
+    df_base = st.session_state.get('df_aforos_activos', pd.DataFrame())
+    df_completo = st.session_state.get('df_aforos', pd.DataFrame())
+
+    if metodo == "Manning":
+        df_metodo = st.session_state.get('manning_edited_df', pd.DataFrame())
+    elif metodo == "Stevens":
+        df_metodo = st.session_state.get('stevens_edited_df', pd.DataFrame())
+    elif metodo == "Área-Velocidad":
+        df_metodo = st.session_state.get('av_edited_df', pd.DataFrame())
+    else:
+        df_metodo = pd.DataFrame()
+
+    if isinstance(df_metodo, pd.DataFrame) and not df_metodo.empty and 'Incluir' in df_metodo.columns:
+        ids_activos = df_metodo.loc[df_metodo['Incluir'] == True, 'ID'].dropna().tolist()
+        if ids_activos:
+            for df_candidato in (df_base, df_completo):
+                if isinstance(df_candidato, pd.DataFrame) and not df_candidato.empty:
+                    col_id = next((col for col in ('NO.', 'ID') if col in df_candidato.columns), None)
+                    if col_id:
+                        df_filtrado = df_candidato[df_candidato[col_id].isin(ids_activos)].copy()
+                        if not df_filtrado.empty:
+                            return df_filtrado
+
+    if isinstance(df_base, pd.DataFrame) and not df_base.empty:
+        return df_base.copy()
+    if isinstance(df_completo, pd.DataFrame):
+        return df_completo.copy()
+    return pd.DataFrame()
+
 def _parsear_fechas_series(serie):
     """Parsea fechas robustamente (texto, datetime y serial Excel)."""
     if serie is None:
@@ -417,9 +448,7 @@ def _parsear_fechas_series(serie):
 
 def _firma_reporte(numero_reporte):
     perfil = st.session_state.get('perfil_data', {}) or {}
-    df_aforos = st.session_state.get('df_aforos_activos', pd.DataFrame())
-    if df_aforos.empty:
-        df_aforos = st.session_state.get('df_aforos', pd.DataFrame())
+    df_aforos = _obtener_df_aforos_para_metodo()
     prefijo_data = "manning" if st.session_state.get('metodo_definitivo') == "Manning" else "stevens" if st.session_state.get('metodo_definitivo') == "Stevens" else "av"
     df_curva = st.session_state.get(f'{prefijo_data}_curve', pd.DataFrame())
 
@@ -441,7 +470,7 @@ def _firma_reporte(numero_reporte):
     return hashlib.sha256("|".join(partes_firma).encode("utf-8")).hexdigest()
 
 def _obtener_vigencia_automatica():
-    df_aforos = st.session_state.get('df_aforos_activos', st.session_state.get('df_aforos'))
+    df_aforos = _obtener_df_aforos_para_metodo()
     fecha_por_defecto = pd.Timestamp.today().date()
 
     if df_aforos is None or df_aforos.empty:
@@ -525,10 +554,8 @@ def generar_reporte_html(numero_reporte, fecha_vigencia_inicio=None, fecha_vigen
         modelo_usado = modelo_key
         
     # --- 4. EXTRACCIÓN DE DATOS FALTANTES ---
-    # Fallback: usar df_aforos completo si df_aforos_activos no fue inicializado (Tab 1 no interactuado)
-    df_aforos = st.session_state.get('df_aforos_activos', pd.DataFrame())
-    if df_aforos.empty:
-        df_aforos = st.session_state.get('df_aforos', pd.DataFrame())
+    # Usar únicamente los aforos activos del método definitivo para respetar su filtro individual.
+    df_aforos = _obtener_df_aforos_para_metodo(metodo)
     prefijo_data = "manning" if metodo == "Manning" else "stevens" if metodo == "Stevens" else "av"
     
     df_curva = st.session_state.get(f'{prefijo_data}_curve', pd.DataFrame())
