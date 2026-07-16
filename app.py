@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-APLICACIÓN DE CURVA DE GASTO - DASHBOARD INTERACTIVO (VERSIÓN STREAMLIT)
+APLICACIÓN DE CURVA DE GASTO - DASHBOARD INTERACTIVO
 """
 
 import streamlit as st
@@ -72,7 +72,7 @@ def _normalizar_columna_numerica(df, columna):
     return df
 
 # Configuración de página a pantalla completa
-st.set_page_config(page_title="Curva de Gasto", layout="wide")
+st.set_page_config(page_title="RENIC", layout="wide")
 
 # --- CSS  ---
 st.markdown(
@@ -808,7 +808,7 @@ def generar_reporte_html(numero_reporte, fecha_vigencia_inicio=None, fecha_vigen
                 </div>
             </div>
 
-            <div class="footer">Documento generado por el motor de cálculo Curva de Gasto v2.0<br>© 2026 - Reporte de Ingeniería Hidrológica</div>
+            <div class="footer">Documento generado por el motor de cálculo Curva de Gasto - RENIC v2.0<br>© 2026 - Reporte de Ingeniería Hidrológica</div>
         </div>
     </body>
     </html>
@@ -1042,7 +1042,7 @@ if 'banda_error_global' not in st.session_state:
 if 'opts_modelos_man' not in st.session_state: 
     st.session_state.opts_modelos_man = {"lineal": True, "exp": True, "log": True, "pot": True}
 
-st.title("🌊 Curva de Gasto")
+st.title("🌊 RENIC - Curva de Gasto")
 
 # --- CARGA DE ARCHIVOS --- 
 with st.sidebar:
