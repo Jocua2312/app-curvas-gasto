@@ -4137,6 +4137,17 @@ with tab7:
             if "nombre_validador_reporte" not in st.session_state:
                 st.session_state.nombre_validador_reporte = ""
 
+            fecha_vigencia_minima = datetime.date(1900, 1, 1)
+            fecha_vigencia_maxima = datetime.date(2100, 12, 31)
+
+            fecha_inicio_default = st.session_state.vigencia_inicio_reporte
+            if fecha_inicio_default is not None:
+                fecha_inicio_default = max(min(fecha_inicio_default, fecha_vigencia_maxima), fecha_vigencia_minima)
+
+            fecha_fin_default = st.session_state.vigencia_fin_reporte or vigencia_auto_fin or fecha_vigencia_inicio
+            if fecha_fin_default is not None:
+                fecha_fin_default = max(min(fecha_fin_default, fecha_vigencia_maxima), fecha_vigencia_minima)
+
             with st.form("form_config_reporte_ejecutivo"):
                 numero_reporte = st.number_input(
                     "Tabla de Gasto N°",
@@ -4152,14 +4163,18 @@ with tab7:
                 with col_v1:
                     fecha_vigencia_inicio = st.date_input(
                         "Fecha de inicio de vigencia",
-                        value=st.session_state.vigencia_inicio_reporte,
+                        value=fecha_inicio_default,
+                        min_value=fecha_vigencia_minima,
+                        max_value=fecha_vigencia_maxima,
                         format="DD/MM/YYYY",
                         key="vigencia_inicio_reporte"
                     )
                 with col_v2:
                     fecha_vigencia_fin = st.date_input(
                         "Fecha final de vigencia",
-                        value=st.session_state.vigencia_fin_reporte or vigencia_auto_fin or fecha_vigencia_inicio,
+                        value=fecha_fin_default,
+                        min_value=fecha_vigencia_minima,
+                        max_value=fecha_vigencia_maxima,
                         format="DD/MM/YYYY",
                         key="vigencia_fin_reporte",
                         disabled=st.session_state.vigencia_fin_indefinida_reporte
